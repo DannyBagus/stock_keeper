@@ -1,43 +1,72 @@
 # 📦 Stock Keeper
 
-Ein Django-basiertes Bestandsmanagement-System (Inventory Management), optimiert für den Einsatz im Lager mit mobiler Scan-Funktion, PDF-Belegerstellung und Docker-Support.
-
-Dieses Tool ermöglicht die effiziente Verwaltung von Produkten, Lieferanten und Bestellungen und bietet eine nahtlose Integration von Barcode-Scannern über mobile Browser.
+Ein modernes, Django-basiertes **Inventory Management System**, optimiert für Lagerumgebungen, mobile Datenerfassung und schnelle Dokumentenerstellung.  
+Der Fokus liegt auf effizientem Handling von Produkten, Lieferanten, Bestellungen und Verkaufsprozessen – inklusive mobilem Barcode-Scanner direkt im Browser.
 
 ![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
 ![Django](https://img.shields.io/badge/Django-5.x-092E20?logo=django&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)
 ![MySQL](https://img.shields.io/badge/MySQL-8.0-4479A1?logo=mysql&logoColor=white)
 
+---
+
+## 📚 Inhaltsverzeichnis
+
+1. [Funktionen](#-funktionen)  
+2. [Technologie-Stack](#-technologie-stack)  
+3. [Installation & Setup](#-installation--setup)  
+   - [Voraussetzungen](#voraussetzungen)  
+   - [Repository klonen](#1-repository-klonen)  
+   - [Docker Setup](#2-docker-setup)  
+4. [Konfiguration](#-konfiguration)  
+5. [Entwicklungsmodus](#-entwicklungsmodus)  
+6. [PDF-Beispiele & Scanner](#-pdf-beispiele--scanner)  
+7. [Lizenz](#-lizenz)
+
+---
+
 ## ✨ Funktionen
 
-### App 1: Stock Manager (Core)
+### **App 1: Stock Manager (Core)**
 
-* **📦 Produktverwaltung:** Anlegen, Bearbeiten und Löschen von Produkten, Kategorien und Lieferanten.
-* **📱 Mobile Scanner:** Integrierter Barcode/QR-Code Scanner, der über die Handykamera im Browser läuft (via `html5-qrcode`).
-* **🎨 Admin UI:** Angepasstes, modernes Django-Admin Interface (Jazzmin Theme) für effiziente Verwaltung.
+- **📦 Produktverwaltung:** Produkte, Kategorien & Lieferanten anlegen, bearbeiten, löschen.
+- **📱 Mobile Scanner:** Browserbasierter Barcode- & QR-Code-Scanner via `html5-qrcode`.
+- **🎨 Modernes Admin UI:** Verbesserte Usability durch Jazzmin Admin Theme.
 
-### App 2: Commerce & Accounting
+### **App 2: Commerce & Accounting**
 
-* **📝 Bestellwesen (Purchase Orders):** Erfassung von Bestellungen bei Lieferanten.
-* **📥 Warenannahme:** Ein-Klick-Buchung von Wareneingängen, die automatisch den Lagerbestand aktualisiert.
-* **💰 Verkauf (Sales):** Erfassung manueller Verkäufe.
-* **📄 PDF-Export:** Generierung professioneller PDFs für Bestellaufträge und Verkaufsquittungen (inkl. MwSt-Ausweisung und Schweizer Franken Formatierung).
+- **📝 Bestellwesen (Purchase Orders):** Erstellen und Verwalten von Bestellungen.
+- **📥 Warenannahme:** Ein-Klick-Wareneingänge mit automatischer Bestandsaktualisierung.
+- **💰 Verkäufe:** Erfassung manueller Verkäufe.
+- **📄 PDF Export:**  
+  - Bestellungen (PO-PDF)  
+  - Verkaufsquittungen  
+  - Schweizer Franken (CHF) Formatierung & MwSt-Ausweisung  
 
-## 🛠️ Technologie Stack
+---
 
-* **Backend:** Python 3.11, Django 5.x
-* **Datenbank:** MySQL 8.0
-* **Frontend:** Django Templates, HTMX (vorbereitet), Alpine.js (vorbereitet), `html5-qrcode`
-* **PDF Engine:** `xhtml2pdf`
-* **Deployment:** Docker & Docker Compose
+## 🛠️ Technologie-Stack
+
+| Bereich | Technologie |
+|--------|-------------|
+| **Backend** | Python 3.11, Django 5.x |
+| **Datenbank** | MySQL 8.0 |
+| **Frontend** | Django Templates, HTMX (vorbereitet), Alpine.js, html5-qrcode |
+| **PDF Engine** | xhtml2pdf |
+| **Deployment** | Docker & Docker Compose |
+| **Styling & Admin** | Jazzmin Admin |
+
+---
 
 ## 🚀 Installation & Setup
 
 ### Voraussetzung
 
-* Docker & Docker Compose installiert
-* Git installiert
+- Docker & Docker Compose installiert  
+- Git installiert  
+- Optional: Python 3.11 für lokalen Development-Mode
+
+---
 
 ### 1. Repository klonen
 
