@@ -125,34 +125,41 @@ JAZZMIN_SETTINGS = {
     "site_brand": "Stock Keeper",
     "welcome_sign": "Willkommen im Lager",
     "copyright": "Stock Keeper Ltd",
-    "search_model": ["core.Product", "commerce.PurchaseOrder"], # Suchleiste sucht direkt hier
+    "search_model": ["core.Product", "commerce.PurchaseOrder"],
 
     # User Menu
-    "show_ui_builder": True, # <--- DAS HIER AKTIVIERT DAS WERKZEUG-ICON OBEN RECHTS
+    "show_ui_builder": True,
 
-    # Navigation
+    # Navigation (Oben)
     "topmenu_links": [
         {"name": "Dashboard", "url": "admin:index", "permissions": ["auth.view_user"]},
-        # KORREKTUR: Muss auf den absoluten Pfad /core/scanner/ zeigen
-        {"name": "Scanner", "url": "/core/scanner/", "permissions": ["auth.view_user"], "icon": "fas fa-qrcode"},
-        # Website Link (extern)
-        # {"name": "Webseite", "url": "/"},
+        # Scanner hier ENTFERNT, damit er nicht oben Platz wegnimmt
     ],
 
+    # Navigation (Links / Sidebar)
+    # HIER FÜGEN WIR DEN SCANNER HINZU
+    "custom_links": {
+        "core": [{
+            "name": "Scanner", 
+            "url": "/core/scanner/", 
+            "icon": "fas fa-qrcode",
+            "permissions": ["auth.view_user"]
+        }]
+    },
+
     # Icons für die Sidebar (FontAwesome 5 Free)
-    # Hier ordnen wir den Models Icons zu
     "icons": {
         "auth": "fas fa-users-cog",
         "auth.user": "fas fa-user",
         "auth.Group": "fas fa-users",
         
-        "core.Product": "fas fa-box-open",      # Box Icon für Produkte
-        "core.Category": "fas fa-tags",         # Tag Icon für Kategorien
-        "core.Supplier": "fas fa-truck",        # LKW Icon für Lieferanten
-        "core.Vat": "fas fa-percent",           # Prozent Icon für Steuern
+        "core.Product": "fas fa-box-open",
+        "core.Category": "fas fa-tags",
+        "core.Supplier": "fas fa-truck",
+        "core.Vat": "fas fa-percent",
         
         "commerce.PurchaseOrder": "fas fa-file-invoice-dollar",
-        "commerce.Sale": "fas fa-cash-register", # Kasse für Verkäufe
+        "commerce.Sale": "fas fa-cash-register",
     },
     
     # Reihenfolge der Apps in der Sidebar
