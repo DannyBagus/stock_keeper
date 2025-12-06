@@ -1,89 +1,237 @@
 {% extends "admin/base_site.html" %}
 {% load static %}
 
+{% block extrahead %}
+<style>
+    /* Optimierungen für Mobile View */
+    #reader {
+        width: 100%;
+        border-radius: 8px;
+        overflow: hidden;
+        background: #000;
+        margin-bottom: 15px;
+    }
+    #reader video {
+        object-fit: cover;
+        border-radius: 8px;
+    }
+    .scanner-controls {
+        background: #f8f9fa;
+        padding: 15px;
+        border-radius: 8px;
+        margin-bottom: 20px;
+        border: 1px solid #ddd;
+    }
+    .zoom-container {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 10px;
+    }
+    .zoom-slider {
+        flex-grow: 1;
+        height: 25px;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
-<div class="col-12 col-md-8 offset-md-2">
+<div class="col-12 col-lg-8 offset-lg-2">
     <div class="card card-primary card-outline">
-        <div class="card-header">
-            <h3 class="card-title"><i class="fas fa-qrcode mr-2"></i> Barcode Scanner</h3>
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h3 class="card-title"><i class="fas fa-qrcode mr-2"></i> Scanner Pro</h3>
+            <span id="camera-status" class="badge badge-secondary">Kamera startet...</span>
         </div>
-        <div class="card-body text-center">
+        <div class="card-body">
             
-            <!-- Der Bereich für die Kamera -->
-            <div id="reader" style="width: 100%; min-height: 300px; background: #000;"></div>
+            <!-- Scanner Area -->
+            <div id="reader" style="min-height: 300px;"></div>
+
+            <!-- Controls Area (Zoom & Torch) -->
+            <div class="scanner-controls" id="controls" style="display:none;">
+                <div class="row">
+                    <div class="col-12 mb-2">
+                        <strong><i class="fas fa-search-plus"></i> Zoom</strong>
+                        <div class="zoom-container">
+                            <i class="fas fa-minus small"></i>
+                            <input type="range" id="zoom-slider" class="zoom-slider" min="1" max="5" step="0.1" value="1">
+                            <i class="fas fa-plus small"></i>
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <button id="torch-btn" class="btn btn-outline-warning btn-block btn-sm" disabled>
+                            <i class="fas fa-lightbulb"></i> Licht
+                        </button>
+                    </div>
+                    <div class="col-6">
+                        <button id="restart-btn" class="btn btn-outline-secondary btn-block btn-sm">
+                            <i class="fas fa-sync"></i> Neustart
+                        </button>
+                    </div>
+                </div>
+            </div>
 
             <!-- Manuelle Eingabe (Fallback) -->
-            <hr>
             <form method="POST" id="scan-form">
                 {% csrf_token %}
-                <div class="input-group mb-3">
-                    <input type="text" name="ean" id="ean-input" class="form-control" placeholder="EAN manuell eingeben oder scannen" autofocus>
+                <div class="input-group input-group-lg">
+                    <input type="text" name="ean" id="ean-input" class="form-control" placeholder="EAN manuell eingeben" autofocus>
                     <div class="input-group-append">
-                        <button class="btn btn-primary" type="submit">Suchen</button>
+                        <button class="btn btn-primary" type="submit">
+                            <i class="fas fa-arrow-right"></i>
+                        </button>
                     </div>
                 </div>
             </form>
 
-            <div id="scan-result" class="mt-3 font-weight-bold text-success"></div>
+            <div id="scan-result" class="mt-3 font-weight-bold text-center text-success h5"></div>
+            
+            <!-- Format Auswahl (Optional für Debugging) -->
+            <div class="mt-3 text-muted small text-center">
+                <p>Scannt nach: EAN-13, EAN-8, QR, Code-128</p>
+            </div>
         </div>
     </div>
 </div>
 
-<!-- JS Library für QR/Barcode -->
 <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
 
 <script>
-    function onScanSuccess(decodedText, decodedResult) {
-        // Optional: Verhindert doppelte Scans kurz hintereinander
-        if (document.getElementById('ean-input').value === decodedText) {
-            return;
-        }
+    const html5QrCode = new Html5Qrcode("reader");
+    let currentZoom = 1.0;
+    let cameraCapabilities = null;
 
-        console.log(`Scan result ${decodedText}`, decodedResult);
-        
-        // Wert ins Input-Feld schreiben
-        document.getElementById('ean-input').value = decodedText;
-        
-        // Feedback UI
-        document.getElementById('scan-result').innerText = "Gelesen: " + decodedText;
-
-        // Kleiner Timeout vor dem Absenden, damit der User sieht, was gescannt wurde
-        setTimeout(() => {
-             document.getElementById('scan-form').submit();
-        }, 500);
-    }
-
-    function onScanFailure(error) {
-        // handle scan failure, usually better to ignore and keep scanning.
-    }
-
-    // WICHTIG: Konfiguration der erlaubten Formate
-    // Beschränkung auf gängige Produkt-Barcodes erhöht die Genauigkeit massiv!
+    // Wir beschränken uns auf die wichtigsten Formate für höchste Präzision
     const formatsToSupport = [
-        Html5QrcodeSupportedFormats.EAN_13,
-        Html5QrcodeSupportedFormats.EAN_8,
-        Html5QrcodeSupportedFormats.UPC_A,
-        Html5QrcodeSupportedFormats.UPC_E,
-        Html5QrcodeSupportedFormats.CODE_128,
-        Html5QrcodeSupportedFormats.QR_CODE
+        Html5QrcodeSupportedFormats.EAN_13, // Standard Retail
+        Html5QrcodeSupportedFormats.EAN_8,  // Kleine Produkte
+        Html5QrcodeSupportedFormats.QR_CODE,
+        Html5QrcodeSupportedFormats.CODE_128, // Versandlabels
+        Html5QrcodeSupportedFormats.UPC_A, // USA Importe
     ];
 
-    // Scanner initialisieren mit optimierten Settings
-    let html5QrcodeScanner = new Html5QrcodeScanner(
-        "reader", 
-        { 
-            fps: 10, 
-            qrbox: {width: 280, height: 150}, // Breiteres Fenster für lange Barcodes
-            aspectRatio: 1.0,
-            formatsToSupport: formatsToSupport, // HIER: Formate einschränken
-            experimentalFeatures: {
-                useBarCodeDetectorIfSupported: true // Nutzt native Android/Chrome API wenn verfügbar
-            },
-            rememberLastUsedCamera: true
-        },
-        /* verbose= */ false
-    );
-    
-    html5QrcodeScanner.render(onScanSuccess, onScanFailure);
+    const config = {
+        fps: 15, // Höhere FPS für flüssigeres Bild
+        qrbox: { width: 280, height: 180 }, // Breiteres Fenster für EANs
+        aspectRatio: 1.0,
+        formatsToSupport: formatsToSupport,
+        experimentalFeatures: {
+            useBarCodeDetectorIfSupported: true
+        }
+    };
+
+    // Callback bei Erfolg
+    const onScanSuccess = (decodedText, decodedResult) => {
+        if (document.getElementById('ean-input').value === decodedText) return;
+
+        // Feedback: Sound abspielen (optional) oder vibrieren
+        if (navigator.vibrate) navigator.vibrate(200);
+
+        document.getElementById('ean-input').value = decodedText;
+        document.getElementById('scan-result').innerText = "Gelesen: " + decodedText;
+        document.getElementById('camera-status').className = "badge badge-success";
+        document.getElementById('camera-status').innerText = "Code erkannt!";
+
+        // Kurze Pause, dann absenden
+        setTimeout(() => {
+             document.getElementById('scan-form').submit();
+        }, 600);
+    };
+
+    // Kamera starten
+    const startCamera = () => {
+        html5QrCode.start(
+            { facingMode: "environment" }, // Rückkamera bevorzugen
+            config,
+            onScanSuccess,
+            (errorMessage) => { 
+                // Parsing error, ignorieren wir meistens 
+            }
+        ).then(() => {
+            // Kamera läuft erfolgreich
+            document.getElementById('controls').style.display = 'block';
+            document.getElementById('camera-status').className = "badge badge-success";
+            document.getElementById('camera-status').innerText = "Aktiv";
+            
+            // Kamera-Fähigkeiten abrufen (für Zoom & Licht)
+            setupCameraControls();
+        }).catch((err) => {
+            document.getElementById('camera-status').className = "badge badge-danger";
+            document.getElementById('camera-status').innerText = "Fehler: " + err;
+            console.error(err);
+        });
+    };
+
+    // Zoom und Licht Logik
+    const setupCameraControls = () => {
+        // Zugriff auf den laufenden Video-Track
+        const videoTrack = html5QrCode.getRunningTrackCameraCapabilities(); 
+        // Für ältere Versionen oder falls capabilities anders strukturiert sind:
+        // const [track] = html5QrCode.getRunningTrack(); 
+        
+        // Versuchen, Capabilities zu holen (nicht alle Browser unterstützen das gleich)
+        try {
+            // Holen wir uns den Track direkt vom Stream, falls die Lib es nicht direkt gibt
+            // Hinweis: html5-qrcode kapselt das etwas, wir nutzen applyVideoConstraints wenn möglich
+            
+            // Zoom Slider Event Listener
+            const zoomSlider = document.getElementById('zoom-slider');
+            zoomSlider.addEventListener('input', (event) => {
+                const value = event.target.value;
+                applyZoom(value);
+            });
+
+            // Licht Button
+            const torchBtn = document.getElementById('torch-btn');
+            // Prüfen ob 'torch' supported wird ist komplex via Lib, wir probieren es einfach
+            torchBtn.disabled = false; 
+            torchBtn.addEventListener('click', () => {
+                toggleTorch();
+            });
+
+        } catch (e) {
+            console.log("Erweiterte Kamera-Kontrollen nicht verfügbar", e);
+        }
+    };
+
+    const applyZoom = (zoomValue) => {
+        try {
+            html5QrCode.applyVideoConstraints({
+                advanced: [{ zoom: parseFloat(zoomValue) }]
+            });
+        } catch (err) {
+            console.warn("Zoom nicht unterstützt", err);
+        }
+    };
+
+    let isTorchOn = false;
+    const toggleTorch = () => {
+        try {
+            isTorchOn = !isTorchOn;
+            html5QrCode.applyVideoConstraints({
+                advanced: [{ torch: isTorchOn }]
+            });
+            const btn = document.getElementById('torch-btn');
+            if(isTorchOn) {
+                btn.classList.remove('btn-outline-warning');
+                btn.classList.add('btn-warning');
+            } else {
+                btn.classList.add('btn-outline-warning');
+                btn.classList.remove('btn-warning');
+            }
+        } catch (err) {
+            console.warn("Taschenlampe nicht unterstützt", err);
+        }
+    };
+
+    document.getElementById('restart-btn').addEventListener('click', () => {
+        html5QrCode.stop().then(() => {
+            startCamera();
+        });
+    });
+
+    // Start beim Laden
+    startCamera();
+
 </script>
 {% endblock %}
