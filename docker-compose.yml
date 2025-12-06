@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  db:
+    image: mysql:8.0
+    container_name: stock_keeper_db
+    restart: always
+    environment:
+      # Diese Variablen werden durch die Datei .env.prod gefüllt
+      # (via 'docker-compose --env-file .env.prod up')
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+    volumes:
+      - db_data:/var/lib/mysql
+    ports:
+      # Geändert: Externer Port 3309 wie gewünscht
+      - "3309:3306"
+    networks:
+      - "daniel_default"
+    healthcheck:
+      test: ["CMD", "mysqladmin" ,"ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
+  web:
+    build: .
+    container_name: stock_keeper_web
+    restart: always
+    command: /app/entrypoint.sh
+    volumes:
+      - .:/app
+      - static_volume:/app/static
+      - media_volume:/app/media
+    ports:
+      # Geändert: Externer Port 8008 wie gewünscht
+      - "8008:8000"
+    # Hier sagen wir dem Container explizit, dass er .env.prod nutzen soll
+    env_file:
+      - .env.prod
+    environment:
+      - DJANGO_SETTINGS_MODULE=stock_keeper.settings.prod
+      - DB_HOST=db
+    networks:
+      - "daniel_default"
+    labels:
+      traefik.enable: "true"
+
+      # Router Konfiguration
+      traefik.http.routers.stock-keeper.entrypoints: "websecure"
+      #traefik.http.routers.stock-keeper.middlewares: "authelia@docker"
+      traefik.http.routers.stock-keeper.rule: "Host(`stock-keeper.raowy.ch`)"
+
+      # TLS / SSL (Wildcard Strategie - nur für diesen Container aktiviert)
+      traefik.http.routers.stock-keeper.tls: "true"
+      traefik.http.routers.stock-keeper.tls.certresolver: "cfresolver"
+
+      # Wir beantragen ein Zertifikat für *.mileja... und mileja...
+      traefik.http.routers.stock-keeper.tls.domains[0].main: "raowy.ch"
+      traefik.http.routers.stock-keeper.tls.domains[0].sans: "*.raowy.ch"
+      
+      traefik.http.services.stock-keeper.loadbalancer.server.port: "8000"
+      traefik.http.services.stock-keeper.loadbalancer.server.scheme: "http"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  db_data:
+  static_volume:
+  media_volume:
+
+networks:
+  daniel_default:
+    external: true
+    name: "daniel_default"

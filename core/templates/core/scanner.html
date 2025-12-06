@@ -1,0 +1,81 @@
+{% extends "admin/base_site.html" %} {% load static %} {% block content %}
+<div class="col-12 col-md-8 offset-md-2">
+  <div class="card card-primary card-outline">
+    <div class="card-header">
+      <h3 class="card-title">
+        <i class="fas fa-qrcode mr-2"></i> Barcode Scanner
+      </h3>
+    </div>
+    <div class="card-body text-center">
+      <!-- Der Bereich für die Kamera -->
+      <div
+        id="reader"
+        style="width: 100%; min-height: 300px; background: #000"
+      ></div>
+
+      <!-- Manuelle Eingabe (Fallback) -->
+      <hr />
+      <form method="POST" id="scan-form">
+        {% csrf_token %}
+        <div class="input-group mb-3">
+          <input
+            type="text"
+            name="ean"
+            id="ean-input"
+            class="form-control"
+            placeholder="EAN manuell eingeben oder scannen"
+            autofocus
+          />
+          <div class="input-group-append">
+            <button class="btn btn-primary" type="submit">Suchen</button>
+          </div>
+        </div>
+      </form>
+
+      <div id="scan-result" class="mt-3 font-weight-bold text-success"></div>
+    </div>
+  </div>
+</div>
+
+<!-- JS Library für QR/Barcode -->
+<script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+
+<script>
+  function onScanSuccess(decodedText, decodedResult) {
+    // Handle on success condition with the decoded message.
+    console.log(`Scan result ${decodedText}`, decodedResult);
+
+    // Stoppen des Scanners nach erfolgreichem Scan (optional, verhindert Mehrfach-Scans)
+    // html5QrcodeScanner.clear();
+
+    // Wert ins Input-Feld schreiben
+    document.getElementById("ean-input").value = decodedText;
+
+    // Formular automatisch absenden
+    document.getElementById("scan-form").submit();
+
+    // Feedback UI
+    document.getElementById("scan-result").innerText =
+      "Gelesen: " + decodedText;
+  }
+
+  function onScanFailure(error) {
+    // handle scan failure, usually better to ignore and keep scanning.
+    // for example:
+    // console.warn(`Code scan error = ${error}`);
+  }
+
+  // Scanner initialisieren
+  let html5QrcodeScanner = new Html5QrcodeScanner(
+    "reader",
+    {
+      fps: 10,
+      qrbox: { width: 250, height: 150 }, // Rechteckige Box für Barcodes besser als Quadrat
+      aspectRatio: 1.0,
+    },
+    /* verbose= */ false
+  );
+
+  html5QrcodeScanner.render(onScanSuccess, onScanFailure);
+</script>
+{% endblock %}
