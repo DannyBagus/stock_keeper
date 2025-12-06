@@ -1,99 +1,46 @@
-Stock Keeper 📦
+# 📦 Stock Keeper
 
 Ein Django-basiertes Bestandsmanagement-System (Inventory Management), optimiert für den Einsatz im Lager mit mobiler Scan-Funktion, PDF-Belegerstellung und Docker-Support.
 
-🚀 Features
+Dieses Tool ermöglicht die effiziente Verwaltung von Produkten, Lieferanten und Bestellungen und bietet eine nahtlose Integration von Barcode-Scannern über mobile Browser.
 
-App 1: Stock Manager (Core)
+![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
+![Django](https://img.shields.io/badge/Django-5.x-092E20?logo=django&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)
+![MySQL](https://img.shields.io/badge/MySQL-8.0-4479A1?logo=mysql&logoColor=white)
 
-Produktverwaltung: Anlegen, Bearbeiten und Löschen von Produkten, Kategorien und Lieferanten.
+## ✨ Funktionen
 
-Mobile Scanner: Integrierter Barcode/QR-Code Scanner, der über die Handykamera im Browser läuft (via html5-qrcode).
+### App 1: Stock Manager (Core)
 
-Admin UI: Angepasstes, modernes Django-Admin Interface (Jazzmin Theme) für effiziente Verwaltung.
+* **📦 Produktverwaltung:** Anlegen, Bearbeiten und Löschen von Produkten, Kategorien und Lieferanten.
+* **📱 Mobile Scanner:** Integrierter Barcode/QR-Code Scanner, der über die Handykamera im Browser läuft (via `html5-qrcode`).
+* **🎨 Admin UI:** Angepasstes, modernes Django-Admin Interface (Jazzmin Theme) für effiziente Verwaltung.
 
-App 2: Commerce & Accounting
+### App 2: Commerce & Accounting
 
-Bestellwesen (Purchase Orders): Erfassung von Bestellungen bei Lieferanten.
+* **📝 Bestellwesen (Purchase Orders):** Erfassung von Bestellungen bei Lieferanten.
+* **📥 Warenannahme:** Ein-Klick-Buchung von Wareneingängen, die automatisch den Lagerbestand aktualisiert.
+* **💰 Verkauf (Sales):** Erfassung manueller Verkäufe.
+* **📄 PDF-Export:** Generierung professioneller PDFs für Bestellaufträge und Verkaufsquittungen (inkl. MwSt-Ausweisung und Schweizer Franken Formatierung).
 
-Warenannahme: Ein-Klick-Buchung von Wareneingängen, die automatisch den Lagerbestand aktualisiert.
+## 🛠️ Technologie Stack
 
-Verkauf (Sales): Erfassung manueller Verkäufe.
+* **Backend:** Python 3.11, Django 5.x
+* **Datenbank:** MySQL 8.0
+* **Frontend:** Django Templates, HTMX (vorbereitet), Alpine.js (vorbereitet), `html5-qrcode`
+* **PDF Engine:** `xhtml2pdf`
+* **Deployment:** Docker & Docker Compose
 
-PDF-Export: Generierung professioneller PDFs für Bestellaufträge und Verkaufsquittungen (inkl. MwSt-Ausweisung und Schweizer Franken Formatierung).
+## 🚀 Installation & Setup
 
-🛠️ Technologie Stack
+### Voraussetzung
 
-Backend: Python 3.11, Django 5.x
+* Docker & Docker Compose installiert
+* Git installiert
 
-Datenbank: MySQL 8.0
+### 1. Repository klonen
 
-Frontend: Django Templates, HTMX (vorbereitet), Alpine.js (vorbereitet), html5-qrcode
-
-PDF Engine: xhtml2pdf
-
-Deployment: Docker & Docker Compose
-
-⚙️ Installation & Setup
-
-Voraussetzung
-
-Docker & Docker Compose installiert
-
-Git installiert
-
-1. Repository klonen
-
+```bash
 git clone <DEIN_REPO_URL>
 cd stock_keeper
-
-
-2. Environment Variablen setzen
-
-Erstelle eine Datei .env.prod im Hauptverzeichnis basierend auf diesem Template:
-
-# Django
-DEBUG=False
-SECRET_KEY=dein-geheimer-key
-ALLOWED_HOSTS=localhost,127.0.0.1,deine-domain.com
-
-# Datenbank
-DB_NAME=stock_keeper
-DB_USER=stock_keeper
-DB_PASSWORD=dein_db_passwort
-DB_ROOT_PASSWORD=dein_root_passwort
-DB_HOST=db
-DB_PORT=3306
-
-
-3. Starten mit Docker (Produktion)
-
-# Bauen und Starten der Container
-docker-compose --env-file .env.prod up --build -d
-
-# Erstellen eines Superusers (nur beim ersten Mal nötig)
-docker-compose --env-file .env.prod exec web python manage.py createsuperuser
-
-
-Die App ist nun unter http://localhost:8008 (oder deiner konfigurierten IP/Domain) erreichbar.
-
-4. Lokale Entwicklung (ohne Docker)
-
-# Venv erstellen und aktivieren
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-
-# Abhängigkeiten installieren
-pip install -r requirements.txt
-
-# Lokale .env Datei erstellen (DB_HOST=127.0.0.1)
-
-# Migrationen und Start
-python manage.py migrate
-python manage.py runserver
-
-
-📱 Mobile Scanner Nutzung
-
-Der Scanner benötigt zwingend HTTPS (oder localhost), damit der Browser den Zugriff auf die Kamera erlaubt. Für den lokalen Test im Netzwerk empfiehlt sich ein Tunneling-Tool wie ngrok.
-
