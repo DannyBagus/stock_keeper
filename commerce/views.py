@@ -60,16 +60,15 @@ def api_checkout(request):
     try:
         data = json.loads(request.body)
         cart_items = data.get('items', [])
-        
-        # FIX 1: Payment Method auslesen (Standard: CASH)
         payment_method = data.get('payment_method', 'CASH')
         
         if not cart_items:
             return JsonResponse({'error': 'Warenkorb ist leer'}, status=400)
 
-        # FIX 1: Payment Method beim Erstellen übergeben
+        # FIX: created_by setzen!
         sale = Sale.objects.create(
-            payment_method=payment_method
+            payment_method=payment_method,
+            created_by=request.user 
         )
 
         for item in cart_items:
@@ -127,6 +126,8 @@ def api_purchase_checkout(request):
             return JsonResponse({'error': 'Bestellliste ist leer'}, status=400)
 
         supplier = Supplier.objects.get(pk=supplier_id)
+        
+        # Purchase Order erstellen
         po = PurchaseOrder.objects.create(
             supplier=supplier,
             created_by=request.user,
