@@ -20,25 +20,61 @@
             // Scanner Logic
             scanner: null,
             showScannerControls: false,
-            scanCooldown: false, // Verhindert Mehrfachscans
+            scanCooldown: false, 
 
-            // Daten nach Abschluss
             createdSaleId: null,
             createdPdfUrl: '',
 
-            // Toast State
             toast: { show: false, message: '', type: 'success' },
 
-            // Payment / SumUp
             paymentMethod: 'CASH', 
-            sumUpAffiliateKey: 'sup_afk_fhpRcEDdXRZouibkztggzW5qwt3DbL4a', // TODO: Key einfügen
+            sumUpAffiliateKey: 'sup_afk_fhpRcEDdXRZouibkztggzW5qwt3DbL4a', 
 
             init() {
-                // Scanner Startpunkt
+                // 1. Versuchen, Status wiederherzustellen (falls wir von SumUp App kommen)
+                this.restoreState();
+                
+                // 2. Scanner starten
                 this.startScanner();
             },
 
-            // Toast Helper
+            // --- PERSISTENCE LOGIC (NEU) ---
+            saveState(method) {
+                // Speichert Warenkorb und Payment-Wunsch im Browser Storage
+                localStorage.setItem('pos_cart', JSON.stringify(this.cart));
+                localStorage.setItem('pos_payment_method', method);
+                localStorage.setItem('pos_active', 'true');
+            },
+
+            clearState() {
+                localStorage.removeItem('pos_cart');
+                localStorage.removeItem('pos_payment_method');
+                localStorage.removeItem('pos_active');
+            },
+
+            restoreState() {
+                if (localStorage.getItem('pos_active') === 'true') {
+                    try {
+                        const savedCart = JSON.parse(localStorage.getItem('pos_cart'));
+                        const savedMethod = localStorage.getItem('pos_payment_method');
+                        
+                        if (savedCart && savedCart.length > 0) {
+                            this.cart = savedCart;
+                            this.paymentMethod = savedMethod || 'CASH';
+                            
+                            // Wenn wir von SumUp kommen (Method ist SUMUP), öffnen wir direkt das Modal wieder
+                            if (this.paymentMethod === 'SUMUP') {
+                                this.showCheckoutModal = true;
+                                this.showNotification('Warenkorb nach App-Wechsel wiederhergestellt.', 'success');
+                            }
+                        }
+                    } catch (e) {
+                        console.error("Fehler beim Wiederherstellen:", e);
+                    }
+                }
+            },
+            // -------------------------------
+
             showNotification(message, type = 'success') {
                 this.toast.message = message;
                 this.toast.type = type;
@@ -52,34 +88,19 @@
                     Html5QrcodeSupportedFormats.QR_CODE, Html5QrcodeSupportedFormats.CODE_128,
                     Html5QrcodeSupportedFormats.UPC_A
                 ];
-                
-                // Verhindert Doppel-Start
                 if(this.scanner) return;
 
                 this.scanner = new Html5Qrcode("reader");
                 this.scanner.start(
                     { facingMode: "environment" },
-                    { 
-                        fps: 15, 
-                        qrbox: { width: 280, height: 180 }, 
-                        aspectRatio: 1.0, 
-                        formatsToSupport: formats, 
-                        experimentalFeatures: { useBarCodeDetectorIfSupported: true } 
-                    },
+                    { fps: 15, qrbox: { width: 280, height: 180 }, aspectRatio: 1.0, formatsToSupport: formats, experimentalFeatures: { useBarCodeDetectorIfSupported: true } },
                     (decodedText) => {
-                        // Cooldown Check
                         if (this.scanCooldown) return;
-
                         if (this.searchQuery !== decodedText) {
                             this.scanCooldown = true;
                             this.searchQuery = decodedText;
-                            
                             if (navigator.vibrate) navigator.vibrate(200);
-                            
-                            // Suche auslösen
                             this.performSearch(true);
-
-                            // Scanner kurz pausieren
                             setTimeout(() => { this.scanCooldown = false; }, 1500);
                         }
                     },
@@ -101,8 +122,6 @@
             
             async performSearch(isEnterPress) {
                 if (this.searchQuery.length < 2) return;
-                
-                // Bei Enter (Scanner) Cooldown aktivieren falls nicht schon aktiv
                 if (isEnterPress) this.scanCooldown = true;
 
                 const res = await fetch(`/commerce/api/search/?q=${this.searchQuery}`);
@@ -114,8 +133,6 @@
                      this.showNotification(`Produkt '${this.searchQuery}' nicht gefunden`, 'error');
                      setTimeout(() => { this.scanCooldown = false; }, 1500);
                 }
-
-                // Auto-Add bei genau einem Treffer
                 if (isEnterPress && this.searchResults.length === 1) {
                     this.addToCart(this.searchResults[0]);
                 }
@@ -123,7 +140,6 @@
     
             addToCart(product) {
                 const existingItem = this.cart.find(item => item.id === product.id);
-                
                 if (existingItem) {
                     existingItem.qty++;
                 } else {
@@ -135,10 +151,7 @@
                         qty: 1
                     });
                 }
-                
                 this.showNotification(`${product.name} hinzugefügt (+1)`);
-                
-                // Reset
                 this.searchQuery = '';
                 this.searchResults = [];
                 this.noResults = false;
@@ -164,20 +177,24 @@
     
             initiateCheckout() {
                 if (this.cart.length === 0) return;
-                this.paymentMethod = 'CASH'; // Reset auf Barzahlung
+                this.paymentMethod = 'CASH'; // Reset Default
                 this.showCheckoutModal = true;
             },
 
             // SumUp App starten via Deep Link
             startSumUpPayment() {
+                // ZUERST speichern wir den State, weil wir die App verlassen
+                this.paymentMethod = 'SUMUP';
+                this.saveState('SUMUP');
+
                 const total = this.cartTotal.toFixed(2);
                 const title = 'Kauf-' + new Date().getTime(); 
                 const currency = 'CHF';
                 
-                // URL Scheme für SumUp App
+                // Wir fügen einen Return-Parameter hinzu, falls SumUp das unterstützt,
+                // ansonsten verlässt man sich auf manuelles Zurückkehren.
                 const url = `sumupmerchant://pay/1.0?affiliate-key=${this.sumUpAffiliateKey}&app-id=ch.stockkeeper.app&total=${total}&currency=${currency}&title=${title}&skip-screen-success=true`;
                 
-                this.paymentMethod = 'SUMUP';
                 window.location.href = url;
             },
 
@@ -200,6 +217,9 @@
                     const result = await response.json();
                     
                     if (result.success) {
+                        // Erfolg! State löschen
+                        this.clearState();
+                        
                         this.cart = [];
                         this.createdSaleId = result.sale_id;
                         this.createdPdfUrl = result.pdf_url;
@@ -226,7 +246,7 @@
                 this.createdSaleId = null;
                 this.createdPdfUrl = '';
                 this.searchQuery = '';
-                // Fokus zurück auf Suchfeld optional, Scanner ist ja an
+                this.clearState(); // Sicherstellen dass alles sauber ist
             }
         }
     }
@@ -352,6 +372,7 @@
                             <input type="range" id="zoom-slider" class="zoom-slider custom-range" min="1" max="5" step="0.1" value="1">
                             <i class="fas fa-search-plus ml-2 text-muted"></i>
                         </div>
+                        <div class="text-center mt-1"><small class="text-muted">Zoom einstellen für Fokus</small></div>
                     </div>
                 </div>
             </div>
@@ -419,7 +440,9 @@
                                     </tr>
                                 </template>
                                 <tr x-show="cart.length === 0">
-                                    <td colspan="4" class="text-center py-4 text-muted">Warenkorb leer. Scannen Sie Produkte.</td>
+                                    <td colspan="4" class="text-center py-4 text-muted">
+                                        Warenkorb leer. Scannen Sie Produkte.
+                                    </td>
                                 </tr>
                             </tbody>
                         </table>
