@@ -17,105 +17,109 @@
             showCheckoutModal: false,
             showSuccessModal: false,
             
-            // Scanner
+            // Scanner Logic
             scanner: null,
             showScannerControls: false,
+            scanCooldown: false, // Verhindert Mehrfachscans
 
+            // Daten nach Abschluss
             createdSaleId: null,
             createdPdfUrl: '',
-            
+
+            // Toast State
+            toast: { show: false, message: '', type: 'success' },
+
             init() {
-                // Scanner beim Start laden
+                // Scanner Startpunkt
                 this.startScanner();
             },
 
-            startScanner() {
-                const formatsToSupport = [
-                    Html5QrcodeSupportedFormats.EAN_13,
-                    Html5QrcodeSupportedFormats.EAN_8,
-                    Html5QrcodeSupportedFormats.QR_CODE,
-                    Html5QrcodeSupportedFormats.CODE_128,
-                    Html5QrcodeSupportedFormats.UPC_A,
-                ];
-
-                this.scanner = new Html5Qrcode("reader");
-                
-                const config = {
-                    fps: 15,
-                    qrbox: { width: 280, height: 180 },
-                    aspectRatio: 1.0,
-                    formatsToSupport: formatsToSupport,
-                    experimentalFeatures: { useBarCodeDetectorIfSupported: true }
-                };
-
-                this.scanner.start(
-                    { facingMode: "environment" },
-                    config,
-                    (decodedText, decodedResult) => {
-                        // On Success
-                        console.log("Scanned:", decodedText);
-                        
-                        // Nur reagieren, wenn es ein neuer Code ist oder das Feld leer
-                        if (this.searchQuery !== decodedText) {
-                            this.searchQuery = decodedText;
-                            
-                            // Feedback Sound/Vibration
-                            if (navigator.vibrate) navigator.vibrate(200);
-                            
-                            // Suche auslösen (simuliert Enter-Druck für Auto-Add)
-                            this.performSearch(true);
-                        }
-                    },
-                    (errorMessage) => { 
-                        // Ignore errors
-                    }
-                ).then(() => {
-                    this.showScannerControls = true;
-                    this.setupCameraControls();
-                }).catch(err => {
-                    console.warn("Scanner Start Error", err);
-                });
+            // Toast Helper
+            showNotification(message, type = 'success') {
+                this.toast.message = message;
+                this.toast.type = type;
+                this.toast.show = true;
+                setTimeout(() => { this.toast.show = false; }, 3000);
             },
 
-            setupCameraControls() {
-                // Zoom Slider Logic
-                const zoomSlider = document.getElementById('zoom-slider');
-                if(zoomSlider) {
-                    zoomSlider.addEventListener('input', (event) => {
-                        try {
-                            this.scanner.applyVideoConstraints({
-                                advanced: [{ zoom: parseFloat(event.target.value) }]
-                            });
-                        } catch(e) {}
+            startScanner() {
+                const formats = [
+                    Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8,
+                    Html5QrcodeSupportedFormats.QR_CODE, Html5QrcodeSupportedFormats.CODE_128,
+                    Html5QrcodeSupportedFormats.UPC_A
+                ];
+                
+                // Verhindert Doppel-Start
+                if(this.scanner) return;
+
+                this.scanner = new Html5Qrcode("reader");
+                this.scanner.start(
+                    { facingMode: "environment" },
+                    { 
+                        fps: 15, 
+                        qrbox: { width: 280, height: 180 }, 
+                        aspectRatio: 1.0, 
+                        formatsToSupport: formats, 
+                        experimentalFeatures: { useBarCodeDetectorIfSupported: true } 
+                    },
+                    (decodedText) => {
+                        // Cooldown Check
+                        if (this.scanCooldown) return;
+
+                        if (this.searchQuery !== decodedText) {
+                            this.scanCooldown = true;
+                            this.searchQuery = decodedText;
+                            
+                            if (navigator.vibrate) navigator.vibrate(200);
+                            
+                            // Suche auslösen
+                            this.performSearch(true);
+
+                            // Scanner kurz pausieren
+                            setTimeout(() => { this.scanCooldown = false; }, 1500);
+                        }
+                    },
+                    (err) => {}
+                ).then(() => {
+                    this.showScannerControls = true;
+                    this.setupZoom();
+                }).catch(err => console.log("Scanner Error:", err));
+            },
+
+            setupZoom() {
+                const slider = document.getElementById('zoom-slider');
+                if(slider) {
+                    slider.addEventListener('input', (e) => {
+                        try { this.scanner.applyVideoConstraints({ advanced: [{ zoom: parseFloat(e.target.value) }] }); } catch(e){}
                     });
                 }
             },
-
-            toggleTorch() {
-                try {
-                    // Wir tracken den State nicht lokal, sondern toggeln einfach basierend auf Current Settings wäre komplexer,
-                    // hier einfacher Workaround via applyVideoConstraints
-                    // html5-qrcode bietet keine einfache toggleTorch() Methode, wir nutzen den Track-Hack oder State
-                    // Vereinfacht: Wir nutzen hier nur Zoom, da Torch oft buggy ist ohne Track-Access
-                    alert("Licht-Steuerung erfordert HTTPS und aktive Kamera."); 
-                } catch(e) {}
-            },
-    
+            
             async performSearch(isEnterPress) {
                 if (this.searchQuery.length < 2) return;
+                
+                // Bei Enter (Scanner) Cooldown aktivieren falls nicht schon aktiv
+                if (isEnterPress) this.scanCooldown = true;
+
                 const res = await fetch(`/commerce/api/search/?q=${this.searchQuery}`);
                 const data = await res.json();
                 this.searchResults = data.results;
                 this.noResults = this.searchResults.length === 0;
+                
+                if (this.noResults && isEnterPress) {
+                     this.showNotification(`Produkt '${this.searchQuery}' nicht gefunden`, 'error');
+                     setTimeout(() => { this.scanCooldown = false; }, 1500);
+                }
+
+                // Auto-Add bei genau einem Treffer
                 if (isEnterPress && this.searchResults.length === 1) {
                     this.addToCart(this.searchResults[0]);
-                    // Fokus zurück ins Feld für nächsten Scan, aber wir behalten den Scanner aktiv
-                    // this.$nextTick(() => document.getElementById('search-input').focus());
                 }
             },
     
             addToCart(product) {
                 const existingItem = this.cart.find(item => item.id === product.id);
+                
                 if (existingItem) {
                     existingItem.qty++;
                 } else {
@@ -123,9 +127,14 @@
                         id: product.id,
                         name: product.name,
                         price: product.price,
+                        ean: product.ean,
                         qty: 1
                     });
                 }
+                
+                this.showNotification(`${product.name} hinzugefügt (+1)`);
+                
+                // Reset
                 this.searchQuery = '';
                 this.searchResults = [];
                 this.noResults = false;
@@ -173,14 +182,15 @@
                         this.cart = [];
                         this.createdSaleId = result.sale_id;
                         this.createdPdfUrl = result.pdf_url;
+                        
                         this.showCheckoutModal = false;
                         this.showSuccessModal = true;
                     } else {
-                        alert('Fehler: ' + result.error);
+                        this.showNotification('Fehler: ' + result.error, 'error');
                         this.showCheckoutModal = false;
                     }
                 } catch (err) {
-                    alert('Netzwerkfehler: ' + err);
+                    this.showNotification('Netzwerkfehler: ' + err, 'error');
                 } finally {
                     this.isLoading = false;
                 }
@@ -194,8 +204,9 @@
                 this.showSuccessModal = false;
                 this.createdSaleId = null;
                 this.createdPdfUrl = '';
-                // Wir leeren das Suchfeld
                 this.searchQuery = '';
+                // Fokus zurück aufs Feld (optional, da Scanner aktiv bleibt)
+                // this.$nextTick(() => document.getElementById('search-input').focus());
             }
         }
     }
@@ -205,51 +216,12 @@
 
 <style>
     /* Scanner Styles */
-    #reader {
-        width: 100%;
-        border-radius: 8px;
-        overflow: hidden;
-        background: #000;
-        min-height: 250px;
-    }
-    #reader video {
-        object-fit: cover;
-        border-radius: 8px;
-    }
-    .scanner-controls {
-        background: #f8f9fa;
-        padding: 10px;
-        border-radius: 0 0 8px 8px;
-        border: 1px solid #ddd;
-        border-top: none;
-        margin-bottom: 15px;
-    }
-    .zoom-container {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-    }
-    .zoom-slider {
-        flex-grow: 1;
-        height: 25px;
-    }
+    #reader { width: 100%; border-radius: 8px; overflow: hidden; background: #000; min-height: 250px; }
+    #reader video { object-fit: cover; border-radius: 8px; }
+    .scanner-controls { background: #f8f9fa; padding: 10px; border-radius: 0 0 8px 8px; border: 1px solid #ddd; border-top: none; margin-bottom: 15px; }
+    .zoom-slider { width: 100%; }
 
-    /* Modal & Layout Styles */
-    .modal-overlay {
-        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-        background: rgba(0,0,0,0.5);
-        display: flex; align-items: center; justify-content: center;
-        z-index: 9999;
-    }
-    .modal-box {
-        background: white; border-radius: 8px; width: 90%; max-width: 500px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1); overflow: hidden;
-        animation: fadeIn 0.2s ease-out;
-    }
-    @keyframes fadeIn {
-        from { opacity: 0; transform: translateY(-20px); }
-        to { opacity: 1; transform: translateY(0); }
-    }
+    /* Modal & UI Styles */
     .pos-container { max-width: 1200px; margin: 0 auto; padding: 20px; }
     .search-box { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }
     .product-list { list-style: none; padding: 0; margin: 0; max-height: 200px; overflow-y: auto; border: 1px solid #eee; display: none; }
@@ -257,6 +229,21 @@
     .product-list li { padding: 10px; border-bottom: 1px solid #eee; cursor: pointer; }
     .product-list li:hover { background-color: #f0f4f8; }
     .cart-table th { background-color: #343a40; color: #fff; }
+    
+    .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 9999; }
+    .modal-box { background: white; border-radius: 8px; width: 90%; max-width: 500px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); overflow: hidden; animation: fadeIn 0.2s ease-out; }
+    
+    /* TOAST STYLES */
+    .toast-notification {
+        position: fixed; bottom: 20px; right: 20px; padding: 15px 25px; border-radius: 8px;
+        color: white; font-weight: bold; box-shadow: 0 4px 12px rgba(0,0,0,0.2); z-index: 10000;
+        display: flex; align-items: center; gap: 10px; animation: slideIn 0.3s ease-out; max-width: 90%;
+    }
+    .toast-success { background-color: #28a745; }
+    .toast-error { background-color: #dc3545; }
+    .toast-warning { background-color: #ffc107; color: #333; }
+    @keyframes slideIn { from { transform: translateY(100px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
 </style>
 {% endblock %}
 
@@ -264,7 +251,16 @@
 <div class="pos-container" x-data="posApp()" x-init="init()">
     {% csrf_token %}
 
-    <!-- MODALS (Checkout & Success) -->
+    <!-- TOAST -->
+    <div x-show="toast.show" class="toast-notification"
+         :class="{ 'toast-success': toast.type === 'success', 'toast-error': toast.type === 'error', 'toast-warning': toast.type === 'warning' }"
+         style="display: none;"
+         x-transition:leave="transition ease-in duration-300" x-transition:leave-start="opacity-100 transform translate-y-0" x-transition:leave-end="opacity-0 transform translate-y-8">
+        <i class="fas" :class="{ 'fa-check-circle': toast.type === 'success', 'fa-exclamation-circle': toast.type === 'error', 'fa-exclamation-triangle': toast.type === 'warning' }"></i>
+        <span x-text="toast.message"></span>
+    </div>
+
+    <!-- CHECKOUT MODAL -->
     <div class="modal-overlay" x-show="showCheckoutModal" style="display: none;">
         <div class="modal-box" @click.away="showCheckoutModal = false">
             <div class="modal-header bg-success text-white">
@@ -286,6 +282,7 @@
         </div>
     </div>
 
+    <!-- SUCCESS MODAL -->
     <div class="modal-overlay" x-show="showSuccessModal" style="display: none;">
         <div class="modal-box">
             <div class="modal-header bg-primary text-white">
@@ -386,7 +383,9 @@
                                     </tr>
                                 </template>
                                 <tr x-show="cart.length === 0">
-                                    <td colspan="4" class="text-center py-4 text-muted">Warenkorb leer. Scannen Sie Produkte.</td>
+                                    <td colspan="4" class="text-center py-4 text-muted">
+                                        Warenkorb leer. Scannen Sie Produkte.
+                                    </td>
                                 </tr>
                             </tbody>
                         </table>
