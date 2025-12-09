@@ -1,6 +1,12 @@
+import hmac
+import hashlib
+import base64
+import json
+from django.conf import settings
 from django.shortcuts import render, get_object_or_404, redirect
-from django.http import JsonResponse, HttpResponse
+from django.http import JsonResponse, HttpResponse, HttpResponseForbidden
 from django.contrib import admin
+from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST, require_GET
 from django.contrib.admin.views.decorators import staff_member_required
 from django.db import transaction
@@ -65,10 +71,11 @@ def api_checkout(request):
         if not cart_items:
             return JsonResponse({'error': 'Warenkorb ist leer'}, status=400)
 
-        # FIX: created_by setzen!
         sale = Sale.objects.create(
             payment_method=payment_method,
-            created_by=request.user 
+            created_by=request.user,
+            # WICHTIG: Explizit POS setzen (auch wenn es Default ist)
+            channel=Sale.SalesChannel.POS 
         )
 
         for item in cart_items:
@@ -127,7 +134,6 @@ def api_purchase_checkout(request):
 
         supplier = Supplier.objects.get(pk=supplier_id)
         
-        # Purchase Order erstellen
         po = PurchaseOrder.objects.create(
             supplier=supplier,
             created_by=request.user,
@@ -154,3 +160,69 @@ def api_purchase_checkout(request):
 
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
+
+# --- WEBHOOKS ---
+
+def verify_shopify_webhook(request):
+    secret = settings.SHOPIFY_WEBHOOK_SECRET.encode('utf-8')
+    hmac_header = request.headers.get('X-Shopify-Hmac-Sha256')
+    
+    if not hmac_header:
+        return False
+
+    digest = hmac.new(secret, request.body, hashlib.sha256).digest()
+    computed_hmac = base64.b64encode(digest).decode('utf-8')
+
+    return hmac.compare_digest(computed_hmac, hmac_header)
+
+@csrf_exempt 
+@require_POST
+def shopify_webhook(request):
+    """
+    Empfängt 'orders/paid' Events von Shopify.
+    """
+    if hasattr(settings, 'SHOPIFY_WEBHOOK_SECRET') and settings.SHOPIFY_WEBHOOK_SECRET and not verify_shopify_webhook(request):
+        return HttpResponseForbidden("Invalid Signature")
+
+    try:
+        data = json.loads(request.body)
+        
+        shopify_order_id = str(data.get('id'))
+        if Sale.objects.filter(transaction_id=shopify_order_id).exists():
+            return HttpResponse("Order already processed", status=200)
+
+        # FIX: Channel auf WEB setzen!
+        sale = Sale.objects.create(
+            payment_method=Sale.PaymentMethod.SHOPIFY_PAYMENTS, # Nutzt den Wert 'SHOPIFY'
+            transaction_id=shopify_order_id,
+            channel=Sale.SalesChannel.WEB # <--- WICHTIG: Online Kanal setzen
+        )
+
+        for line_item in data.get('line_items', []):
+            sku = line_item.get('sku')
+            quantity = line_item.get('quantity')
+            price = Decimal(line_item.get('price')) 
+            
+            product = None
+            if sku:
+                product = Product.objects.filter(sku=sku).first()
+            
+            if not product:
+                print(f"WARNUNG: Shopify Produkt mit SKU {sku} nicht in DB gefunden.")
+                continue
+
+            SaleItem.objects.create(
+                sale=sale,
+                product=product,
+                quantity=quantity,
+                unit_price_gross=price,
+                vat_rate=product.vat.rate if product.vat else Decimal('0.00')
+            )
+
+        sale.calculate_totals()
+        
+        return HttpResponse("Webhook received and processed", status=200)
+
+    except Exception as e:
+        print(f"Error processing webhook: {e}")
+        return HttpResponse("Internal Server Error", status=500)

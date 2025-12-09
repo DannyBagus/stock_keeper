@@ -20,3 +20,7 @@ DATABASES = {
 
 # Für HTMX/Alpine Entwicklung hilfreich: Console Email Backend
 EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+
+
+# Shopify API Key
+SHOPIFY_WEBHOOK_SECRET = os.environ.get('SHOPIFY_WEBHOOK_SECRET', '')

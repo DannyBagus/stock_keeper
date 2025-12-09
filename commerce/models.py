@@ -102,14 +102,29 @@ class Sale(models.Model):
     date = models.DateTimeField(default=timezone.now)
     total_amount_net = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     total_amount_gross = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-    
+
+    # Zahlungsarten (Wie fließt das Geld?)
     class PaymentMethod(models.TextChoices):
         CASH = 'CASH', 'Barzahlung'
         SUMUP = 'SUMUP', 'SumUp (Karte)'
-        TWINT = 'TWINT', 'Twint' # Optional für später
+        SHOPIFY_PAYMENTS = 'SHOPIFY', 'Shopify Payments' # Für Online
+        TWINT = 'TWINT', 'Twint'
+        INVOICE = 'INVOICE', 'Rechnung'
+
+    # Vertriebskanal (Wo wurde gekauft?)
+    class SalesChannel(models.TextChoices):
+        POS = 'POS', 'Ladenlokal (Kasse)'
+        WEB = 'WEB', 'Online Shop (Shopify)'
+        MANUAL = 'MANUAL', 'Manuell / Telefon'
 
     payment_method = models.CharField(max_length=20, choices=PaymentMethod.choices, default=PaymentMethod.CASH)
     transaction_id = models.CharField(max_length=100, blank=True, null=True, help_text="Transaktions-ID von SumUp/Twint")
+    channel = models.CharField(
+        max_length=10, 
+        choices=SalesChannel.choices, 
+        default=SalesChannel.POS,
+        help_text="Über welchen Kanal wurde dieser Verkauf getätigt?"
+    )
     
     # Optional: User für Audit Log
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
