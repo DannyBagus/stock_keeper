@@ -121,63 +121,82 @@ LOGIN_REDIRECT_URL = '/'          # Nach Login zum Custom Dashboard
 LOGOUT_REDIRECT_URL = '/admin/login/' # Nach Logout zum Login
 
 
+
 # --- JAZZMIN KONFIGURATION ---
 JAZZMIN_SETTINGS = {
     "site_title": "Stock Keeper",
     "site_header": "Stock Keeper",
-    "site_brand": "Stock Keeper",
+    "site_brand": "SupportElle", # Text neben dem Logo (oder leer lassen)
     "welcome_sign": "Willkommen im Lager",
-    "copyright": "Stock Keeper Ltd",
+    "copyright": "Mileja GmbH",
     "search_model": ["core.Product"],
+
+    # --- LOGO KONFIGURATION (NEU) ---
+    # --- CUSTOM CSS ---
+    # Pfad relativ zu static/ (also core/static/css/custom_admin.css -> css/custom_admin.css)
+    "custom_css": "css/custom_admin.css",
+    # Pfad relativ zu Ihrem static-Ordner (also static/img/logo.png)
+    "site_logo": "img/bee_stock_keeper_logo.png",
+    
+    # Logo auf dem Login-Screen (kann das gleiche oder ein größeres sein)
+    "login_logo": "img/bee_stock_keeper_logo_login.png",
+    
+    # Favicon (Browser Tab)
+    "site_icon": "img/bee_stock_keeper_logo.png",
+    
+    # CSS Klassen für das Logo (optional)
+    "site_logo_classes": "img-circle", 
 
     "show_ui_builder": True,
 
-    # --- TOP MENU (OBEN) ---
-    # Hier nur noch das absolute Minimum.
-    # Da das Logo links oft zur Admin-Übersicht führt, setzen wir hier unser Chart-Dashboard.
-    "topmenu_links": [
-        {"name": "Cockpit", "url": "home", "permissions": ["auth.view_user"]},
+    # --- MODELLE VERSTECKEN ---
+    "hide_models": [
+        "commerce.PurchaseOrder", 
+        "commerce.Sale",
+        "core.Product",
+        "core.Category", 
+        "core.Supplier",
+        "core.Vat"
     ],
 
     # --- SIDEBAR MENU (LINKS) ---
-    # Hier kommen die operativen Hauptfunktionen hin.
     "custom_links": {
-        # Wir gruppieren ALLES "Operative" unter Commerce
         "commerce": [
-            # 1. Verkauf
+            # 0. COCKPIT
+            {"name": "Cockpit", "url": "home", "icon": "fas fa-tachometer-alt", "permissions": ["auth.view_user"]},
+
+            # 1. OPERATIV
             {"name": "Kasse (POS)", "url": "pos", "icon": "fas fa-cash-register text-success", "permissions": ["auth.view_user"]},
-            # 2. Einkauf
             {"name": "Bestellung erfassen", "url": "purchase_pos", "icon": "fas fa-truck-loading text-primary", "permissions": ["auth.view_user"]},
-            # 3. Lager (Scanner hierhin verschoben und umbenannt)
-            {"name": "Lagerverwaltung", "url": "/core/scanner/", "icon": "fas fa-qrcode text-warning", "permissions": ["auth.view_user"]},
+            
+            # 2. VERWALTUNG
+            {"name": "Verkäufe (Sales)", "url": "admin:commerce_sale_changelist", "icon": "fas fa-shopping-basket", "permissions": ["commerce.view_sale"]},
+            {"name": "Bestellarchiv", "url": "admin:commerce_purchaseorder_changelist", "icon": "fas fa-file-invoice", "permissions": ["commerce.view_purchaseorder"]},
         ],
-        # Core hat keine Custom Links mehr, nur noch die Modelle (Stammdaten)
+        
+        "core": [
+            # 1. OPERATIV
+            {"name": "Lagerverwaltung", "url": "/core/scanner/", "icon": "fas fa-qrcode text-warning", "permissions": ["auth.view_user"]},
+            
+            # 2. STAMMDATEN
+            {"name": "Produkte", "url": "admin:core_product_changelist", "icon": "fas fa-box-open", "permissions": ["core.view_product"]},
+            {"name": "Kategorien", "url": "admin:core_category_changelist", "icon": "fas fa-tags", "permissions": ["core.view_category"]},
+            {"name": "Lieferanten", "url": "admin:core_supplier_changelist", "icon": "fas fa-truck", "permissions": ["core.view_supplier"]},
+            {"name": "Steuersätze", "url": "admin:core_vat_changelist", "icon": "fas fa-percent", "permissions": ["core.view_vat"]},
+        ]
     },
 
-    # Icons für Apps und Modelle
     "icons": {
         "auth": "fas fa-users-cog",
         "auth.user": "fas fa-user",
         "auth.Group": "fas fa-users",
-        
-        "core.Product": "fas fa-box-open",
-        "core.Category": "fas fa-tags",
-        "core.Supplier": "fas fa-truck",
-        "core.Vat": "fas fa-percent",
-        
-        "commerce.PurchaseOrder": "fas fa-file-invoice",
-        "commerce.Sale": "fas fa-shopping-basket",
     },
     
-    # Reihenfolge: Commerce (Tagesgeschäft) vor Core (Stammdaten)
     "order_with_respect_to": [
-        "commerce", # POS, Bestellungen
-        "core",     # Produkte, Scanner
-        "auth"      # Benutzerverwaltung
+        "commerce", 
+        "core",     
+        "auth"      
     ],
-    
-    # Optional: Apps einklappen, um Platz zu sparen?
-    # "navigation_expanded": True,
 }
 
 JAZZMIN_UI_TWEAKS = {

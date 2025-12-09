@@ -1,0 +1,22 @@
+/* Anpassungen für Django Jazzmin Theme 
+*/
+
+/* 1. Login-Seite: Logo verkleinern */
+.login-logo img {
+    max-height: 200px;  /* Maximale Höhe beschränken */
+    width: auto;        /* Seitenverhältnis beibehalten */
+    margin-bottom: 10px;
+}
+
+/* 2. Admin-Sidebar (oben links): Logo optimieren */
+/* Falls es dort auch zu groß oder verzerrt ist */
+.main-header .logo .logo-lg img, 
+.main-header .logo .logo-mini img {
+    max-height: 40px;
+    width: auto;
+}
+
+/* Optional: Login-Body Hintergrund etwas abdunkeln für besseren Kontrast */
+body.login-page {
+    background: #2d2d2d; 
+}
