@@ -1,0 +1,202 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block extrahead %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+    .dashboard-card {
+        background: #fff;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        padding: 20px;
+        margin-bottom: 20px;
+        height: 100%;
+    }
+    .kpi-value {
+        font-size: 2.5rem;
+        font-weight: bold;
+        color: #333;
+    }
+    .kpi-label {
+        color: #666;
+        font-size: 0.9rem;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+    .status-badge {
+        padding: 5px 10px;
+        border-radius: 15px;
+        font-size: 0.8rem;
+        font-weight: 600;
+    }
+    .status-draft { background: #e2e3e5; color: #383d41; }
+    .status-ordered { background: #cce5ff; color: #004085; }
+    
+    /* FIX: Wrapper für Charts, um unendliches Wachstum zu verhindern */
+    .chart-container {
+        position: relative;
+        height: 300px;
+        width: 100%;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <h1 class="mb-4">Dashboard</h1>
+
+    <!-- KPI Row -->
+    <div class="row mb-4">
+        <div class="col-md-3 col-sm-6 mb-3">
+            <div class="dashboard-card border-left-primary" style="border-left: 4px solid #4e73df;">
+                <div class="kpi-label">Produkte im Sortiment</div>
+                <div class="kpi-value">{{ total_products }}</div>
+            </div>
+        </div>
+        <div class="col-md-3 col-sm-6 mb-3">
+            <div class="dashboard-card" style="border-left: 4px solid #e74a3b;">
+                <div class="kpi-label">Kritischer Bestand (< 5)</div>
+                <div class="kpi-value text-danger">{{ low_stock }}</div>
+            </div>
+        </div>
+        <div class="col-md-3 col-sm-6 mb-3">
+            <div class="dashboard-card" style="border-left: 4px solid #1cc88a;">
+                <div class="kpi-label">Offene Bestellungen</div>
+                <div class="kpi-value">{{ pending_orders.count }}</div>
+            </div>
+        </div>
+        <!-- Platzhalter für weitere KPI -->
+        <div class="col-md-3 col-sm-6 mb-3">
+            <div class="dashboard-card" style="border-left: 4px solid #f6c23e;">
+                <div class="kpi-label">Scanner</div>
+                <a href="{% url 'scanner' %}" class="btn btn-warning btn-sm mt-2">
+                    <i class="fas fa-qrcode"></i> Jetzt scannen
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts Row -->
+    <div class="row mb-4">
+        <!-- Sales Chart -->
+        <div class="col-md-8 mb-3">
+            <div class="dashboard-card">
+                <h5 class="mb-3">Umsatzentwicklung (CHF)</h5>
+                <!-- FIX: Canvas in Container gewickelt -->
+                <div class="chart-container">
+                    <canvas id="salesChart"></canvas>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Category Chart -->
+        <div class="col-md-4 mb-3">
+            <div class="dashboard-card">
+                <h5 class="mb-3">Produkte nach Kategorie</h5>
+                <!-- FIX: Canvas in Container gewickelt -->
+                <div class="chart-container">
+                    <canvas id="catChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Table Row -->
+    <div class="row">
+        <div class="col-12">
+            <div class="dashboard-card">
+                <h5 class="mb-3">Pendente Bestellungen (Warenannahme ausstehend)</h5>
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Datum</th>
+                                <th>Lieferant</th>
+                                <th>Status</th>
+                                <th>Aktion</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for order in pending_orders %}
+                            <tr>
+                                <td>#{{ order.id }}</td>
+                                <td>{{ order.date|date:"d.m.Y" }}</td>
+                                <td>{{ order.supplier.name }}</td>
+                                <td>
+                                    {% if order.status == 'DRAFT' %}
+                                        <span class="status-badge status-draft">Entwurf</span>
+                                    {% elif order.status == 'ORDERED' %}
+                                        <span class="status-badge status-ordered">Bestellt</span>
+                                    {% else %}
+                                        {{ order.get_status_display }}
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <a href="/admin/commerce/purchaseorder/{{ order.id }}/change/" class="btn btn-sm btn-outline-primary">
+                                        Öffnen
+                                    </a>
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="5" class="text-center text-muted">Keine offenen Bestellungen.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Sales Chart
+    const ctxSales = document.getElementById('salesChart').getContext('2d');
+    new Chart(ctxSales, {
+        type: 'bar',
+        data: {
+            labels: {{ months_json|safe }},
+            datasets: [{
+                label: 'Umsatz (Brutto)',
+                data: {{ revenues_json|safe }},
+                backgroundColor: 'rgba(78, 115, 223, 0.6)',
+                borderColor: 'rgba(78, 115, 223, 1)',
+                borderWidth: 1,
+                borderRadius: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false, // Wichtig: Damit füllt es den Container
+            scales: {
+                y: { beginAtZero: true }
+            }
+        }
+    });
+
+    // Category Chart
+    const ctxCat = document.getElementById('catChart').getContext('2d');
+    new Chart(ctxCat, {
+        type: 'doughnut',
+        data: {
+            labels: {{ cat_labels_json|safe }},
+            datasets: [{
+                data: {{ cat_data_json|safe }},
+                backgroundColor: [
+                    '#4e73df', '#1cc88a', '#36b9cc', '#f6c23e', '#e74a3b', '#858796'
+                ],
+                hoverOffset: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false, // Wichtig
+            plugins: {
+                legend: { position: 'bottom' }
+            }
+        }
+    });
+</script>
+{% endblock %}

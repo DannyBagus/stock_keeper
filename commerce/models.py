@@ -2,8 +2,8 @@ from django.db import models
 from django.conf import settings
 from django.utils import timezone
 from django.db import transaction
-from core.models import Product, Supplier # Stellen Sie sicher, dass core.models importiert ist
-from decimal import Decimal # Decimal muss importiert werden
+from core.models import Product, Supplier 
+from decimal import Decimal 
 
 # --- EINKAUF (Purchase) ---
 
@@ -19,7 +19,7 @@ class PurchaseOrder(models.Model):
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
     
     # Wer hat es bestellt?
-    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True) # Blank erlaubt
     
     # Rechnung vom Lieferanten
     invoice_document = models.FileField(upload_to='invoices_incoming/', blank=True, null=True)
@@ -38,7 +38,7 @@ class PurchaseOrder(models.Model):
         Bucht den Bestand aller Items auf die Produkte, wenn Status auf RECEIVED wechselt.
         """
         if self.status == self.Status.RECEIVED:
-            return # Schon erledigt
+            return 
         
         self.status = self.Status.RECEIVED
         self.save()
@@ -53,23 +53,29 @@ class PurchaseOrderItem(models.Model):
     order = models.ForeignKey(PurchaseOrder, related_name='items', on_delete=models.CASCADE)
     product = models.ForeignKey(Product, on_delete=models.PROTECT)
     quantity = models.PositiveIntegerField()
-    # Wir speichern den Einkaufspreis zum Zeitpunkt der Bestellung
-    unit_price = models.DecimalField(max_digits=10, decimal_places=2)
     
-    # NEU: MwSt Satz zum Zeitpunkt der Bestellung
-    vat_rate = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'), help_text="MwSt Satz zum Zeitpunkt des Kaufs (z.B. 8.10)")
-
+    # KORREKTUR: unit_price darf leer sein (wird automatisch gefüllt)
+    unit_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    
+    # MwSt Satz zum Zeitpunkt der Bestellung (für Historie)
+    vat_rate = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'), help_text="MwSt Satz (z.B. 8.10)")
 
     @property
     def total_price(self):
-        return self.quantity * self.unit_price
+        # Fallback falls unit_price noch None ist
+        price = self.unit_price or Decimal('0.00')
+        return self.quantity * price
     
     def save(self, *args, **kwargs):
-        is_new = self.pk is None
-        # Wenn neu, dann VAT Rate vom Produkt holen
-        if is_new and self.vat_rate == Decimal('0.00'):
-            # Stellt sicher, dass wir den Satz vom Vat Modell ziehen
-            self.vat_rate = self.product.vat.rate if self.product.vat else Decimal('0.00')
+        # 1. Preis automatisch vom Produkt holen (Einkaufspreis), falls leer
+        if self.unit_price is None:
+            self.unit_price = self.product.cost_price
+
+        # 2. MwSt automatisch holen, falls 0.00
+        # Hinweis: Beim PurchaseOrder geht es oft um den Vorsteuerabzug, 
+        # hier nehmen wir vereinfacht den Satz vom Produkt an.
+        if self.vat_rate == Decimal('0.00') and self.product.vat:
+            self.vat_rate = self.product.vat.rate
 
         super().save(*args, **kwargs)
 
@@ -78,10 +84,6 @@ class PurchaseOrderItem(models.Model):
 
 class Sale(models.Model):
     date = models.DateTimeField(default=timezone.now)
-    # Optional: Kunde, falls bekannt
-    # customer = ... 
-    
-    # Summen cachen wir hier, damit wir nicht immer rechnen müssen
     total_amount_net = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     total_amount_gross = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     
@@ -89,10 +91,7 @@ class Sale(models.Model):
         return f"Sale-{self.id} | {self.date.date()}"
 
     def calculate_totals(self):
-        # Einfache Hilfsmethode um Summen zu aktualisieren
         total_gross = sum(item.total_price_gross for item in self.items.all())
-        # Netto Logik müsste man basierend auf den Steuersätzen der Items berechnen
-        # Vereinfacht hier:
         self.total_amount_gross = total_gross
         self.save()
 
@@ -101,24 +100,23 @@ class SaleItem(models.Model):
     product = models.ForeignKey(Product, on_delete=models.PROTECT)
     quantity = models.PositiveIntegerField()
     
-    # Snapshot der Preise beim Verkauf
+    unit_price_gross = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     vat_rate = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'), null=True, blank=True)
-    unit_price_gross = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True) # Auch den Preis absichern
 
     @property
     def total_price_gross(self):
-        return self.quantity * self.unit_price_gross
+        qty = self.quantity or 0
+        price = self.unit_price_gross or Decimal('0.00')
+        return qty * price
 
     def save(self, *args, **kwargs):
         is_new = self.pk is None
-        # Wenn neu, dann Preis und VAT vom Produkt holen
         if is_new and not self.unit_price_gross:
             self.unit_price_gross = self.product.sales_price
             self.vat_rate = self.product.vat.rate if self.product.vat else Decimal('0.00')
         
         super().save(*args, **kwargs)
 
-        # Bestand reduzieren (einfache Logik)
         if is_new:
             self.product.stock_quantity -= self.quantity
             self.product.save()

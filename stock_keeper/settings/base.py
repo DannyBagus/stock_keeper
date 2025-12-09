@@ -116,10 +116,13 @@ MEDIA_ROOT = BASE_DIR / 'media'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 
+# LOGIN REDIRECT (Wichtig!)
+LOGIN_REDIRECT_URL = '/'          # Nach Login zum Custom Dashboard
+LOGOUT_REDIRECT_URL = '/admin/login/' # Nach Logout zum Login
+
 
 # --- JAZZMIN KONFIGURATION ---
 JAZZMIN_SETTINGS = {
-    # Titel im Browser Tab
     "site_title": "Stock Keeper",
     "site_header": "Stock Keeper",
     "site_brand": "Stock Keeper",
@@ -127,27 +130,31 @@ JAZZMIN_SETTINGS = {
     "copyright": "Stock Keeper Ltd",
     "search_model": ["core.Product", "commerce.PurchaseOrder"],
 
-    # User Menu
     "show_ui_builder": True,
 
-    # Navigation (Oben)
+    # --- TOP MENU (OBEN) ---
+    # Hier nur noch das absolute Minimum.
+    # Da das Logo links oft zur Admin-Übersicht führt, setzen wir hier unser Chart-Dashboard.
     "topmenu_links": [
-        {"name": "Dashboard", "url": "admin:index", "permissions": ["auth.view_user"]},
-        # Scanner hier ENTFERNT, damit er nicht oben Platz wegnimmt
+        {"name": "Dashboard (Charts)", "url": "home", "permissions": ["auth.view_user"]},
     ],
 
-    # Navigation (Links / Sidebar)
-    # HIER FÜGEN WIR DEN SCANNER HINZU
+    # --- SIDEBAR MENU (LINKS) ---
+    # Hier kommen die operativen Hauptfunktionen hin.
     "custom_links": {
-        "core": [{
-            "name": "Scanner", 
-            "url": "/core/scanner/", 
-            "icon": "fas fa-qrcode",
-            "permissions": ["auth.view_user"]
-        }]
+        # Wir gruppieren ALLES "Operative" unter Commerce
+        "commerce": [
+            # 1. Verkauf
+            {"name": "Kasse (POS)", "url": "pos", "icon": "fas fa-cash-register", "permissions": ["auth.view_user"]},
+            # 2. Einkauf
+            {"name": "Bestellung erfassen", "url": "purchase_pos", "icon": "fas fa-truck-loading", "permissions": ["auth.view_user"]},
+            # 3. Lager (Scanner hierhin verschoben und umbenannt)
+            {"name": "Lagerverwaltung", "url": "/core/scanner/", "icon": "fas fa-qrcode", "permissions": ["auth.view_user"]},
+        ],
+        # Core hat keine Custom Links mehr, nur noch die Modelle (Stammdaten)
     },
 
-    # Icons für die Sidebar (FontAwesome 5 Free)
+    # Icons für Apps und Modelle
     "icons": {
         "auth": "fas fa-users-cog",
         "auth.user": "fas fa-user",
@@ -158,12 +165,19 @@ JAZZMIN_SETTINGS = {
         "core.Supplier": "fas fa-truck",
         "core.Vat": "fas fa-percent",
         
-        "commerce.PurchaseOrder": "fas fa-file-invoice-dollar",
-        "commerce.Sale": "fas fa-cash-register",
+        "commerce.PurchaseOrder": "fas fa-file-invoice",
+        "commerce.Sale": "fas fa-shopping-basket",
     },
     
-    # Reihenfolge der Apps in der Sidebar
-    "order_with_respect_to": ["core", "commerce", "auth"],
+    # Reihenfolge: Commerce (Tagesgeschäft) vor Core (Stammdaten)
+    "order_with_respect_to": [
+        "commerce", # POS, Bestellungen
+        "core",     # Produkte, Scanner
+        "auth"      # Benutzerverwaltung
+    ],
+    
+    # Optional: Apps einklappen, um Platz zu sparen?
+    # "navigation_expanded": True,
 }
 
 JAZZMIN_UI_TWEAKS = {
@@ -171,23 +185,22 @@ JAZZMIN_UI_TWEAKS = {
     "footer_small_text": False,
     "body_small_text": False,
     "brand_small_text": False,
-    "brand_colour": "navbar-indigo",
-    "accent": "accent-lightblue",
+    "brand_colour": "navbar-primary",
+    "accent": "accent-primary",
     "navbar": "navbar-dark",
     "no_navbar_border": False,
-    "navbar_fixed": True,
+    "navbar_fixed": False,
     "layout_boxed": False,
     "footer_fixed": False,
     "sidebar_fixed": True,
-    "sidebar": "sidebar-dark-indigo",
+    "sidebar": "sidebar-dark-primary",
     "sidebar_nav_small_text": False,
     "sidebar_disable_expand": False,
     "sidebar_nav_child_indent": False,
     "sidebar_nav_compact_style": False,
     "sidebar_nav_legacy_style": False,
     "sidebar_nav_flat_style": False,
-    "theme": "cyborg",
-    "dark_mode_theme": None,
+    "theme": "default",
     "button_classes": {
         "primary": "btn-primary",
         "secondary": "btn-secondary",

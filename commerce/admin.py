@@ -4,10 +4,10 @@ from django.shortcuts import redirect
 from django.contrib import messages
 from .models import PurchaseOrder, PurchaseOrderItem, Sale, SaleItem 
 from .utils import render_to_pdf
-from core.models import Product, Supplier # Muss für die Inlines und Actions vorhanden sein
-from .forms import SaleItemFormSet # NEU: Import des Custom FormSets
+from core.models import Product, Supplier 
+from .forms import SaleItemFormSet 
 
-# --- Inlines (Tabellen innerhalb der Hauptmaske) ---
+# --- Inlines ---
 
 class PurchaseOrderItemInline(admin.TabularInline):
     model = PurchaseOrderItem
@@ -15,44 +15,34 @@ class PurchaseOrderItemInline(admin.TabularInline):
     autocomplete_fields = ['product'] 
     fields = ('product', 'quantity', 'unit_price') 
 
-
 class SaleItemInline(admin.TabularInline):
     model = SaleItem
     extra = 1
     autocomplete_fields = ['product']
-    
-    # NEU: Weist das Custom Formularset zu, das vat_rate setzt
     formset = SaleItemFormSet
-    
-    # Vereinfachte Felder, da die VAT Rate vom FormSet/Hook gesetzt wird
     fields = ('product', 'quantity', 'unit_price_gross')
-    # Wir könnten vat_rate als readonly hinzufügen, aber es wird nicht als Feld übergeben, 
-    # um den IntegrityError zu vermeiden.
 
-
-# --- Haupt Admin für Bestellaufträge ---
+# --- Purchase Order Admin ---
 
 @admin.register(PurchaseOrder)
 class PurchaseOrderAdmin(admin.ModelAdmin):
     actions = ['action_mark_as_received', 'action_generate_pdf']
+    inlines = [PurchaseOrderItemInline]
     
     list_display = ('id', 'supplier', 'date', 'status', 'total_items_count', 'is_booked')
     list_filter = ('status', 'date', 'is_booked')
-    inlines = [PurchaseOrderItemInline]
     
-    # KORREKTUR: Methode MUSS self als Argument haben und INNERHALB der Klasse sein
+    # Readonly wenn Status abgeschlossen (Sicherheits-Feature behalten wir)
+    def get_readonly_fields(self, request, obj=None):
+        if obj and obj.status in [PurchaseOrder.Status.ORDERED, PurchaseOrder.Status.RECEIVED]:
+            return ('status', 'created_by', 'is_booked') 
+        return ()
+
     def total_items_count(self, obj):
         return obj.items.count()
     total_items_count.short_description = "Anzahl Positionen"
-    
-    # Steuert, welche Felder schreibgeschützt sind (verhindert manuelles Buchen)
-    def get_readonly_fields(self, request, obj=None):
-        if obj and obj.status in [obj.Status.ORDERED, obj.Status.RECEIVED]:
-            return self.readonly_fields + ('status',)
-        return self.readonly_fields
 
-
-    # Action 1: Bestand buchen (unverändert)
+    # Actions bleiben gleich...
     @admin.action(description='Ware als eingegangen markieren (Bestand buchen)')
     def action_mark_as_received(self, request, queryset):
         count = 0
@@ -60,29 +50,18 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
             if order.status != PurchaseOrder.Status.RECEIVED:
                 order.mark_as_received()
                 count += 1
-        
         if count > 0:
-            messages.success(request, f"{count} Bestellungen erfolgreich gebucht. Bestand wurde aktualisiert.")
+            messages.success(request, f"{count} Bestellungen erfolgreich gebucht.")
         else:
-            messages.warning(request, "Keine offenen Bestellungen zum Buchen ausgewählt.")
+            messages.warning(request, "Keine offenen Bestellungen ausgewählt.")
             
-    # Action 2: PDF Generierung (unverändert)
-    @admin.action(description='Bestellauftrag als PDF exportieren (nur 1 wählen)')
+    @admin.action(description='Bestellauftrag als PDF exportieren')
     def action_generate_pdf(self, request, queryset):
         if queryset.count() != 1:
-            messages.error(request, "Bitte wählen Sie genau EINEN Bestellauftrag für den PDF-Export aus.")
+            messages.error(request, "Bitte wählen Sie genau EINEN Bestellauftrag aus.")
             return redirect(request.META['HTTP_REFERER'])
-
         order = queryset.first()
-        
-        response = render_to_pdf(
-            'commerce/purchase_order_pdf.html',
-            {
-                'order': order,
-                'items': order.items.all(),
-            }
-        )
-        
+        response = render_to_pdf('commerce/purchase_order_pdf.html', {'order': order, 'items': order.items.all()})
         if isinstance(response, HttpResponse) and response.status_code == 200:
             filename = f"Bestellauftrag_{order.id}_{order.supplier.name}.pdf"
             response['Content-Disposition'] = f'attachment; filename="{filename}"'
@@ -90,12 +69,10 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
         else:
             return response
 
-# --- Haupt Admin für Verkäufe ---
-
+# --- Sale Admin ---
 @admin.register(Sale)
 class SaleAdmin(admin.ModelAdmin):
     actions = ['action_generate_receipt'] 
-    
     list_display = ('id', 'date', 'total_amount_gross')
     list_filter = ('date',)
     inlines = [SaleItemInline] 
@@ -105,23 +82,13 @@ class SaleAdmin(admin.ModelAdmin):
         super().save_related(request, form, formsets, change)
         form.instance.calculate_totals()
         
-    # Action zur Quittungsgenerierung
-    @admin.action(description='Quittung/Beleg als PDF exportieren (nur 1 wählen)')
+    @admin.action(description='Quittung als PDF exportieren')
     def action_generate_receipt(self, request, queryset):
         if queryset.count() != 1:
-            messages.error(request, "Bitte wählen Sie genau EINEN Verkauf für den PDF-Export aus.")
+            messages.error(request, "Bitte wählen Sie genau EINEN Verkauf aus.")
             return redirect(request.META['HTTP_REFERER'])
-
         sale = queryset.first()
-        
-        response = render_to_pdf(
-            'commerce/sale_receipt_pdf.html',
-            {
-                'sale': sale,
-                'items': sale.items.all(),
-            }
-        )
-        
+        response = render_to_pdf('commerce/sale_receipt_pdf.html', {'sale': sale, 'items': sale.items.all()})
         if isinstance(response, HttpResponse) and response.status_code == 200:
             filename = f"Quittung_{sale.id}_{sale.date.strftime('%Y%m%d')}.pdf"
             response['Content-Disposition'] = f'attachment; filename="{filename}"'

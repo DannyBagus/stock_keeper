@@ -1,0 +1,369 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block extrahead %}
+<script>
+    function purchaseApp() {
+        return {
+            supplierId: '',
+            searchQuery: '',
+            searchResults: [],
+            cart: [],
+            noResults: false,
+            isLoading: false,
+            
+            // Modal States
+            showCheckoutModal: false,
+            showSuccessModal: false,
+            
+            // Daten nach Abschluss
+            createdOrderId: null,
+            createdRedirectUrl: '',
+            
+            async performSearch(isEnterPress) {
+                if (this.searchQuery.length < 2) return;
+                const res = await fetch(`/commerce/api/search/?q=${this.searchQuery}`);
+                const data = await res.json();
+                this.searchResults = data.results;
+                this.noResults = this.searchResults.length === 0;
+                if (isEnterPress && this.searchResults.length === 1) {
+                    this.addToCart(this.searchResults[0]);
+                    this.$nextTick(() => document.getElementById('search-input').focus());
+                }
+            },
+    
+            addToCart(product) {
+                if (!product.supplier_id) {
+                    alert(`Achtung: Produkt '${product.name}' hat keinen Lieferanten hinterlegt!`);
+                    return;
+                }
+                if (this.supplierId && String(this.supplierId) !== String(product.supplier_id)) {
+                    alert(`Konflikt: Das Produkt '${product.name}' gehört zu '${product.supplier_name}', aber die aktuelle Bestellung ist für einen anderen Lieferanten.`);
+                    return;
+                }
+                if (!this.supplierId) {
+                    this.supplierId = product.supplier_id;
+                }
+
+                const existingItem = this.cart.find(item => item.id === product.id);
+                if (existingItem) {
+                    existingItem.qty++;
+                } else {
+                    this.cart.push({
+                        id: product.id,
+                        name: product.name,
+                        price: product.cost,
+                        ean: product.ean,
+                        qty: 1
+                    });
+                }
+                this.searchQuery = '';
+                this.searchResults = [];
+                this.noResults = false;
+            },
+    
+            updateQty(index, change) {
+                const item = this.cart[index];
+                item.qty += change;
+                if (item.qty <= 0) this.removeFromCart(index);
+            },
+    
+            removeFromCart(index) {
+                this.cart.splice(index, 1);
+                if (this.cart.length === 0) {
+                    this.supplierId = '';
+                }
+            },
+    
+            get cartTotal() {
+                return this.cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
+            },
+            
+            get cartTotalDisplay() {
+                return parseFloat(this.cartTotal).toFixed(2) + ' CHF';
+            },
+    
+            // Schritt 1: Modal öffnen
+            initiateSubmit() {
+                if (!this.supplierId) {
+                    alert('Kein Lieferant zugeordnet.');
+                    return;
+                }
+                if (this.cart.length === 0) return;
+                this.showCheckoutModal = true;
+            },
+
+            // Schritt 2: Senden
+            async confirmSubmit() {
+                this.isLoading = true;
+                
+                try {
+                    const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+                    const response = await fetch('/commerce/api/purchase-checkout/', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRFToken': csrfToken
+                        },
+                        body: JSON.stringify({ 
+                            supplier_id: this.supplierId,
+                            items: this.cart 
+                        })
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        this.createdOrderId = result.order_id;
+                        this.createdRedirectUrl = result.redirect_url;
+                        this.cart = [];
+                        this.supplierId = '';
+                        
+                        this.showCheckoutModal = false;
+                        this.showSuccessModal = true;
+                    } else {
+                        alert('Fehler: ' + result.error);
+                        this.showCheckoutModal = false;
+                    }
+                } catch (err) {
+                    alert('Netzwerkfehler: ' + err);
+                } finally {
+                    this.isLoading = false;
+                }
+            },
+
+            goToOrder() {
+                if (this.createdRedirectUrl) {
+                    window.location.href = this.createdRedirectUrl;
+                }
+            },
+
+            newOrder() {
+                this.showSuccessModal = false;
+                this.createdOrderId = null;
+                this.createdRedirectUrl = '';
+                this.$nextTick(() => document.getElementById('search-input').focus());
+            }
+        }
+    }
+</script>
+<script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+
+<style>
+    .search-box { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }
+    .product-list { list-style: none; padding: 0; margin: 0; max-height: 200px; overflow-y: auto; border: 1px solid #eee; display: none; }
+    .product-list.active { display: block; }
+    .product-list li { padding: 10px; border-bottom: 1px solid #eee; cursor: pointer; }
+    .product-list li:hover { background-color: #f0f4f8; }
+    .cart-header { background-color: #004a99; color: white; }
+    
+    /* Modal Styles */
+    .modal-overlay {
+        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(0,0,0,0.5);
+        display: flex; align-items: center; justify-content: center;
+        z-index: 9999;
+    }
+    .modal-box {
+        background: white; border-radius: 8px; width: 90%; max-width: 500px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1); overflow: hidden;
+        animation: fadeIn 0.2s ease-out;
+    }
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(-20px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid" style="max-width: 1200px;" x-data="purchaseApp()">
+    {% csrf_token %}
+    
+    <!-- --- MODALS --- -->
+
+    <!-- 1. Confirmation Modal -->
+    <div class="modal-overlay" x-show="showCheckoutModal" style="display: none;">
+        <div class="modal-box" @click.away="showCheckoutModal = false">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title"><i class="fas fa-question-circle"></i> Bestellung anlegen?</h5>
+                <button type="button" class="close text-white" @click="showCheckoutModal = false">&times;</button>
+            </div>
+            <div class="modal-body text-center p-4">
+                <p class="lead">Summe (Netto):</p>
+                <h1 class="display-4 font-weight-bold text-primary" x-text="cartTotalDisplay"></h1>
+                <p class="text-muted">Anzahl Positionen: <span x-text="cart.length"></span></p>
+                <p class="small text-muted">Die Bestellung wird im Status "Entwurf" erstellt.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" @click="showCheckoutModal = false">Abbrechen</button>
+                <button type="button" class="btn btn-primary pl-4 pr-4" 
+                        @click="confirmSubmit()" 
+                        :disabled="isLoading">
+                    <span x-show="!isLoading">Ja, Anlegen</span>
+                    <span x-show="isLoading"><i class="fas fa-spinner fa-spin"></i></span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. Success Modal -->
+    <div class="modal-overlay" x-show="showSuccessModal" style="display: none;">
+        <div class="modal-box">
+            <div class="modal-header bg-success text-white">
+                <h5 class="modal-title">Bestellung erstellt!</h5>
+            </div>
+            <div class="modal-body text-center p-4">
+                <div class="text-success mb-3" style="font-size: 3rem;">
+                    <i class="fas fa-check-circle"></i>
+                </div>
+                <h4>Erledigt!</h4>
+                <p>Bestellung #<span x-text="createdOrderId"></span> wurde als Entwurf gespeichert.</p>
+                
+                <div class="mt-4">
+                    <button class="btn btn-primary btn-lg btn-block mb-2" @click="goToOrder()">
+                        <i class="fas fa-edit"></i> Zur Bestellung (Admin)
+                    </button>
+                    <button class="btn btn-outline-secondary btn-lg btn-block" @click="newOrder()">
+                        <i class="fas fa-plus"></i> Neue Bestellung erfassen
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- --- MAIN UI --- -->
+
+    <div class="row mb-3">
+        <div class="col-12">
+            <h2><i class="fas fa-truck-loading text-primary"></i> Bestellung erfassen</h2>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- LINKER BEREICH -->
+        <div class="col-md-7">
+            
+            <!-- Suche -->
+            <div class="search-box">
+                <label class="h5 mb-3 d-block">1. Produkte hinzufügen (Scan)</label>
+                <div class="input-group input-group-lg">
+                    <input type="text" 
+                           id="search-input"
+                           class="form-control" 
+                           placeholder="EAN scannen oder Name tippen..." 
+                           x-model="searchQuery"
+                           @keydown.enter.prevent="performSearch(true)"
+                           @input.debounce.300ms="performSearch(false)"
+                           autofocus>
+                    <div class="input-group-append">
+                        <button class="btn btn-primary" @click="performSearch(true)">Suchen</button>
+                    </div>
+                </div>
+                
+                <ul class="product-list mt-2" :class="{ 'active': searchResults.length > 0 }">
+                    <template x-for="product in searchResults" :key="product.id">
+                        <li @click="addToCart(product)">
+                            <div class="d-flex justify-content-between">
+                                <div>
+                                    <strong x-text="product.name"></strong><br>
+                                    <small class="text-muted">
+                                        EK: <span x-text="product.cost.toFixed(2)"></span> | 
+                                        Lieferant: <span x-text="product.supplier_name"></span>
+                                    </small>
+                                </div>
+                                <div class="font-weight-bold text-primary">
+                                    + Hinzufügen
+                                </div>
+                            </div>
+                        </li>
+                    </template>
+                </ul>
+            </div>
+
+            <!-- Lieferant Anzeige -->
+            <div class="search-box border-left-primary" style="border-left: 4px solid #004a99;">
+                <label class="h5 mb-3 d-block">2. Lieferant (Automatisch)</label>
+                <select class="form-control form-control-lg" x-model="supplierId" disabled>
+                    <option value="" disabled selected>-- Wird durch ersten Scan gesetzt --</option>
+                    {% for s in suppliers %}
+                        <option value="{{ s.id }}">{{ s.name }}</option>
+                    {% endfor %}
+                </select>
+                <small class="text-muted" x-show="cart.length > 0">
+                    <i class="fas fa-lock"></i> Lieferant fixiert durch Artikel im Warenkorb.
+                </small>
+            </div>
+
+        </div>
+
+        <!-- RECHTER BEREICH: Liste -->
+        <div class="col-md-5">
+            <div class="card shadow">
+                <div class="card-header cart-header">
+                    <h4 class="m-0"><i class="fas fa-list"></i> Bestellliste</h4>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive" style="max-height: 500px; overflow-y: auto;">
+                        <table class="table table-striped mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Produkt</th>
+                                    <th width="100">Menge</th>
+                                    <th class="text-right">Kosten (Netto)</th>
+                                    <th width="40"></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <template x-for="(item, index) in cart" :key="item.id">
+                                    <tr>
+                                        <td>
+                                            <span x-text="item.name"></span><br>
+                                            <small class="text-muted" x-text="item.ean"></small>
+                                        </td>
+                                        <td>
+                                            <div class="input-group input-group-sm">
+                                                <div class="input-group-prepend">
+                                                    <button class="btn btn-outline-secondary" @click="updateQty(index, -1)">-</button>
+                                                </div>
+                                                <input type="text" class="form-control text-center" x-model="item.qty" readonly>
+                                                <div class="input-group-append">
+                                                    <button class="btn btn-outline-secondary" @click="updateQty(index, 1)">+</button>
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td class="text-right">
+                                            <span x-text="(item.price * item.qty).toFixed(2)"></span>
+                                        </td>
+                                        <td>
+                                            <button class="btn btn-sm btn-danger" @click="removeFromCart(index)">&times;</button>
+                                        </td>
+                                    </tr>
+                                </template>
+                                <tr x-show="cart.length === 0">
+                                    <td colspan="4" class="text-center py-4 text-muted">
+                                        Noch keine Artikel.
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="card-footer bg-white">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <span class="h5 m-0 text-muted">Total (Netto):</span>
+                        <span class="h3 m-0 font-weight-bold text-primary" x-text="cartTotalDisplay"></span>
+                    </div>
+                    
+                    <button class="btn btn-primary btn-block btn-lg" 
+                            @click="initiateSubmit()" 
+                            :disabled="cart.length === 0 || !supplierId || isLoading">
+                        <i class="fas fa-save"></i> Bestellung anlegen (Entwurf)
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
