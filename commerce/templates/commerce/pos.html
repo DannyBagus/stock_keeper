@@ -2,7 +2,8 @@
 {% load static %}
 
 {% block extrahead %}
-<!-- 1. App Logik -->
+<script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+
 <script>
     function posApp() {
         return {
@@ -16,9 +17,89 @@
             showCheckoutModal: false,
             showSuccessModal: false,
             
-            // Daten für den Abschluss
+            // Scanner
+            scanner: null,
+            showScannerControls: false,
+
             createdSaleId: null,
             createdPdfUrl: '',
+            
+            init() {
+                // Scanner beim Start laden
+                this.startScanner();
+            },
+
+            startScanner() {
+                const formatsToSupport = [
+                    Html5QrcodeSupportedFormats.EAN_13,
+                    Html5QrcodeSupportedFormats.EAN_8,
+                    Html5QrcodeSupportedFormats.QR_CODE,
+                    Html5QrcodeSupportedFormats.CODE_128,
+                    Html5QrcodeSupportedFormats.UPC_A,
+                ];
+
+                this.scanner = new Html5Qrcode("reader");
+                
+                const config = {
+                    fps: 15,
+                    qrbox: { width: 280, height: 180 },
+                    aspectRatio: 1.0,
+                    formatsToSupport: formatsToSupport,
+                    experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+                };
+
+                this.scanner.start(
+                    { facingMode: "environment" },
+                    config,
+                    (decodedText, decodedResult) => {
+                        // On Success
+                        console.log("Scanned:", decodedText);
+                        
+                        // Nur reagieren, wenn es ein neuer Code ist oder das Feld leer
+                        if (this.searchQuery !== decodedText) {
+                            this.searchQuery = decodedText;
+                            
+                            // Feedback Sound/Vibration
+                            if (navigator.vibrate) navigator.vibrate(200);
+                            
+                            // Suche auslösen (simuliert Enter-Druck für Auto-Add)
+                            this.performSearch(true);
+                        }
+                    },
+                    (errorMessage) => { 
+                        // Ignore errors
+                    }
+                ).then(() => {
+                    this.showScannerControls = true;
+                    this.setupCameraControls();
+                }).catch(err => {
+                    console.warn("Scanner Start Error", err);
+                });
+            },
+
+            setupCameraControls() {
+                // Zoom Slider Logic
+                const zoomSlider = document.getElementById('zoom-slider');
+                if(zoomSlider) {
+                    zoomSlider.addEventListener('input', (event) => {
+                        try {
+                            this.scanner.applyVideoConstraints({
+                                advanced: [{ zoom: parseFloat(event.target.value) }]
+                            });
+                        } catch(e) {}
+                    });
+                }
+            },
+
+            toggleTorch() {
+                try {
+                    // Wir tracken den State nicht lokal, sondern toggeln einfach basierend auf Current Settings wäre komplexer,
+                    // hier einfacher Workaround via applyVideoConstraints
+                    // html5-qrcode bietet keine einfache toggleTorch() Methode, wir nutzen den Track-Hack oder State
+                    // Vereinfacht: Wir nutzen hier nur Zoom, da Torch oft buggy ist ohne Track-Access
+                    alert("Licht-Steuerung erfordert HTTPS und aktive Kamera."); 
+                } catch(e) {}
+            },
     
             async performSearch(isEnterPress) {
                 if (this.searchQuery.length < 2) return;
@@ -28,7 +109,8 @@
                 this.noResults = this.searchResults.length === 0;
                 if (isEnterPress && this.searchResults.length === 1) {
                     this.addToCart(this.searchResults[0]);
-                    this.$nextTick(() => document.getElementById('search-input').focus());
+                    // Fokus zurück ins Feld für nächsten Scan, aber wir behalten den Scanner aktiv
+                    // this.$nextTick(() => document.getElementById('search-input').focus());
                 }
             },
     
@@ -67,13 +149,11 @@
                 return parseFloat(this.cartTotal).toFixed(2) + ' CHF';
             },
     
-            // Schritt 1: Bestätigungs-Modal öffnen
             initiateCheckout() {
                 if (this.cart.length === 0) return;
                 this.showCheckoutModal = true;
             },
 
-            // Schritt 2: Tatsächlicher API Call
             async confirmCheckout() {
                 this.isLoading = true;
                 try {
@@ -90,12 +170,9 @@
                     const result = await response.json();
                     
                     if (result.success) {
-                        // Erfolg!
                         this.cart = [];
                         this.createdSaleId = result.sale_id;
                         this.createdPdfUrl = result.pdf_url;
-                        
-                        // Modals umschalten
                         this.showCheckoutModal = false;
                         this.showSuccessModal = true;
                     } else {
@@ -109,49 +186,64 @@
                 }
             },
 
-            // Schritt 3: Drucken & Schließen
             printReceipt() {
-                if(this.createdPdfUrl) {
-                    // PDF in neuem Tab öffnen -> Browser Druckdialog startet dort meist automatisch
-                    window.open(this.createdPdfUrl, '_blank');
-                }
+                if(this.createdPdfUrl) window.open(this.createdPdfUrl, '_blank');
             },
 
             closeSuccess() {
                 this.showSuccessModal = false;
                 this.createdSaleId = null;
                 this.createdPdfUrl = '';
-                // Fokus zurück aufs Suchfeld für den nächsten Kunden
-                this.$nextTick(() => document.getElementById('search-input').focus());
+                // Wir leeren das Suchfeld
+                this.searchQuery = '';
             }
         }
     }
 </script>
 
-<!-- 2. Alpine laden -->
 <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
 
 <style>
-    /* Styling für Overlays */
-    .modal-overlay {
-        position: fixed;
-        top: 0;
-        left: 0;
+    /* Scanner Styles */
+    #reader {
         width: 100%;
-        height: 100%;
-        background: rgba(0,0,0,0.5);
+        border-radius: 8px;
+        overflow: hidden;
+        background: #000;
+        min-height: 250px;
+    }
+    #reader video {
+        object-fit: cover;
+        border-radius: 8px;
+    }
+    .scanner-controls {
+        background: #f8f9fa;
+        padding: 10px;
+        border-radius: 0 0 8px 8px;
+        border: 1px solid #ddd;
+        border-top: none;
+        margin-bottom: 15px;
+    }
+    .zoom-container {
         display: flex;
         align-items: center;
-        justify-content: center;
+        gap: 10px;
+    }
+    .zoom-slider {
+        flex-grow: 1;
+        height: 25px;
+    }
+
+    /* Modal & Layout Styles */
+    .modal-overlay {
+        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(0,0,0,0.5);
+        display: flex; align-items: center; justify-content: center;
         z-index: 9999;
     }
     .modal-box {
-        background: white;
-        border-radius: 8px;
-        width: 90%;
-        max-width: 500px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        overflow: hidden;
+        background: white; border-radius: 8px; width: 90%; max-width: 500px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1); overflow: hidden;
         animation: fadeIn 0.2s ease-out;
     }
     @keyframes fadeIn {
@@ -159,23 +251,20 @@
         to { opacity: 1; transform: translateY(0); }
     }
     .pos-container { max-width: 1200px; margin: 0 auto; padding: 20px; }
-    /* ... (Restliche Styles bleiben gleich) ... */
     .search-box { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }
     .product-list { list-style: none; padding: 0; margin: 0; max-height: 200px; overflow-y: auto; border: 1px solid #eee; display: none; }
     .product-list.active { display: block; }
     .product-list li { padding: 10px; border-bottom: 1px solid #eee; cursor: pointer; }
-    .product-list li:hover, .product-list li.selected { background-color: #f0f4f8; }
+    .product-list li:hover { background-color: #f0f4f8; }
     .cart-table th { background-color: #343a40; color: #fff; }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="pos-container" x-data="posApp()">
+<div class="pos-container" x-data="posApp()" x-init="init()">
     {% csrf_token %}
 
-    <!-- --- MODALS --- -->
-
-    <!-- 1. Checkout Confirmation Modal -->
+    <!-- MODALS (Checkout & Success) -->
     <div class="modal-overlay" x-show="showCheckoutModal" style="display: none;">
         <div class="modal-box" @click.away="showCheckoutModal = false">
             <div class="modal-header bg-success text-white">
@@ -189,9 +278,7 @@
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" @click="showCheckoutModal = false">Abbrechen</button>
-                <button type="button" class="btn btn-success pl-4 pr-4" 
-                        @click="confirmCheckout()" 
-                        :disabled="isLoading">
+                <button type="button" class="btn btn-success pl-4 pr-4" @click="confirmCheckout()" :disabled="isLoading">
                     <span x-show="!isLoading">Ja, Buchen</span>
                     <span x-show="isLoading"><i class="fas fa-spinner fa-spin"></i></span>
                 </button>
@@ -199,47 +286,48 @@
         </div>
     </div>
 
-    <!-- 2. Success & Print Modal -->
     <div class="modal-overlay" x-show="showSuccessModal" style="display: none;">
         <div class="modal-box">
             <div class="modal-header bg-primary text-white">
                 <h5 class="modal-title">Verkauf erfolgreich!</h5>
             </div>
             <div class="modal-body text-center p-4">
-                <div class="text-success mb-3" style="font-size: 3rem;">
-                    <i class="fas fa-check-circle"></i>
-                </div>
+                <div class="text-success mb-3" style="font-size: 3rem;"><i class="fas fa-check-circle"></i></div>
                 <h4>Vielen Dank!</h4>
-                <p>Der Verkauf #<span x-text="createdSaleId"></span> wurde gespeichert.</p>
-                
+                <p>Beleg #<span x-text="createdSaleId"></span> gespeichert.</p>
                 <div class="mt-4">
-                    <button class="btn btn-warning btn-lg btn-block mb-2" @click="printReceipt()">
-                        <i class="fas fa-print"></i> Quittung drucken (PDF)
-                    </button>
-                    <button class="btn btn-outline-primary btn-lg btn-block" @click="closeSuccess()">
-                        <i class="fas fa-cart-plus"></i> Neuer Einkauf
-                    </button>
+                    <button class="btn btn-warning btn-lg btn-block mb-2" @click="printReceipt()"><i class="fas fa-print"></i> Quittung (PDF)</button>
+                    <button class="btn btn-outline-primary btn-lg btn-block" @click="closeSuccess()"><i class="fas fa-cart-plus"></i> Neuer Einkauf</button>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- --- HAUPT UI --- -->
-
+    <!-- MAIN UI -->
     <div class="row">
-        <!-- LINKER BEREICH: Suche -->
+        <!-- LINKS: Scanner & Suche -->
         <div class="col-md-7">
+            
+            <!-- SCANNER -->
+            <div class="card mb-3 border-0 shadow-sm">
+                <div class="card-body p-0">
+                    <div id="reader"></div>
+                    <div class="scanner-controls" x-show="showScannerControls" style="display: none;">
+                        <div class="d-flex align-items-center">
+                            <i class="fas fa-search-minus mr-2 text-muted"></i>
+                            <input type="range" id="zoom-slider" class="zoom-slider custom-range" min="1" max="5" step="0.1" value="1">
+                            <i class="fas fa-search-plus ml-2 text-muted"></i>
+                        </div>
+                        <div class="text-center mt-1"><small class="text-muted">Zoom einstellen für Fokus</small></div>
+                    </div>
+                </div>
+            </div>
+
             <div class="search-box">
-                <label for="search" class="h4 mb-3 d-block"><i class="fas fa-barcode"></i> Produkt Scannen</label>
+                <label for="search" class="h4 mb-3 d-block"><i class="fas fa-keyboard"></i> Manuelle Eingabe</label>
                 <div class="input-group input-group-lg">
-                    <input type="text" 
-                           id="search-input"
-                           class="form-control" 
-                           placeholder="EAN scannen oder Name tippen..." 
-                           x-model="searchQuery"
-                           @keydown.enter.prevent="performSearch(true)"
-                           @input.debounce.300ms="performSearch(false)"
-                           autofocus>
+                    <input type="text" id="search-input" class="form-control" placeholder="EAN oder Name..." 
+                           x-model="searchQuery" @keydown.enter.prevent="performSearch(true)" @input.debounce.300ms="performSearch(false)">
                     <div class="input-group-append">
                         <button class="btn btn-primary" @click="performSearch(true)">Suchen</button>
                     </div>
@@ -253,9 +341,7 @@
                                     <strong x-text="product.name"></strong><br>
                                     <small class="text-muted">EAN: <span x-text="product.ean"></span> | Lager: <span x-text="product.stock"></span></small>
                                 </div>
-                                <div class="font-weight-bold text-primary">
-                                    <span x-text="formatMoney(product.price)"></span>
-                                </div>
+                                <div class="font-weight-bold text-primary"><span x-text="formatMoney(product.price)"></span></div>
                             </div>
                         </li>
                     </template>
@@ -264,7 +350,7 @@
             </div>
         </div>
 
-        <!-- RECHTER BEREICH: Warenkorb -->
+        <!-- RECHTS: Warenkorb -->
         <div class="col-md-5">
             <div class="card shadow">
                 <div class="card-header bg-dark text-white">
@@ -290,27 +376,17 @@
                                         </td>
                                         <td>
                                             <div class="input-group input-group-sm">
-                                                <div class="input-group-prepend">
-                                                    <button class="btn btn-outline-secondary" @click="updateQty(index, -1)">-</button>
-                                                </div>
+                                                <button class="btn btn-outline-secondary" @click="updateQty(index, -1)">-</button>
                                                 <input type="text" class="form-control text-center" x-model="item.qty" readonly>
-                                                <div class="input-group-append">
-                                                    <button class="btn btn-outline-secondary" @click="updateQty(index, 1)">+</button>
-                                                </div>
+                                                <button class="btn btn-outline-secondary" @click="updateQty(index, 1)">+</button>
                                             </div>
                                         </td>
-                                        <td class="text-right font-weight-bold">
-                                            <span x-text="formatMoney(item.price * item.qty)"></span>
-                                        </td>
-                                        <td>
-                                            <button class="btn btn-sm btn-danger text-white" @click="removeFromCart(index)">&times;</button>
-                                        </td>
+                                        <td class="text-right font-weight-bold"><span x-text="formatMoney(item.price * item.qty)"></span></td>
+                                        <td><button class="btn btn-sm btn-danger text-white" @click="removeFromCart(index)">&times;</button></td>
                                     </tr>
                                 </template>
                                 <tr x-show="cart.length === 0">
-                                    <td colspan="4" class="text-center py-4 text-muted">
-                                        Warenkorb leer.
-                                    </td>
+                                    <td colspan="4" class="text-center py-4 text-muted">Warenkorb leer. Scannen Sie Produkte.</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -318,14 +394,10 @@
                 </div>
                 <div class="card-footer bg-white">
                     <div class="d-flex justify-content-between align-items-center mb-3">
-                        <span class="h5 m-0 text-muted">Summe:</span>
+                        <span class="h5 m-0 text-muted">Gesamtsumme:</span>
                         <span class="h2 m-0 font-weight-bold text-success" x-text="cartTotalDisplay"></span>
                     </div>
-                    
-                    <!-- Button öffnet jetzt das Modal via 'initiateCheckout' -->
-                    <button class="btn btn-success btn-block btn-lg" 
-                            @click="initiateCheckout()" 
-                            :disabled="cart.length === 0 || isLoading">
+                    <button class="btn btn-success btn-block btn-lg" @click="initiateCheckout()" :disabled="cart.length === 0 || isLoading">
                         <i class="fas fa-check-circle"></i> Verkauf abschließen
                     </button>
                 </div>

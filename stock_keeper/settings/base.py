@@ -128,7 +128,7 @@ JAZZMIN_SETTINGS = {
     "site_brand": "Stock Keeper",
     "welcome_sign": "Willkommen im Lager",
     "copyright": "Stock Keeper Ltd",
-    "search_model": ["core.Product", "commerce.PurchaseOrder"],
+    "search_model": ["core.Product"],
 
     "show_ui_builder": True,
 
@@ -136,7 +136,7 @@ JAZZMIN_SETTINGS = {
     # Hier nur noch das absolute Minimum.
     # Da das Logo links oft zur Admin-Übersicht führt, setzen wir hier unser Chart-Dashboard.
     "topmenu_links": [
-        {"name": "Dashboard (Charts)", "url": "home", "permissions": ["auth.view_user"]},
+        {"name": "Cockpit", "url": "home", "permissions": ["auth.view_user"]},
     ],
 
     # --- SIDEBAR MENU (LINKS) ---
@@ -145,11 +145,11 @@ JAZZMIN_SETTINGS = {
         # Wir gruppieren ALLES "Operative" unter Commerce
         "commerce": [
             # 1. Verkauf
-            {"name": "Kasse (POS)", "url": "pos", "icon": "fas fa-cash-register", "permissions": ["auth.view_user"]},
+            {"name": "Kasse (POS)", "url": "pos", "icon": "fas fa-cash-register text-success", "permissions": ["auth.view_user"]},
             # 2. Einkauf
-            {"name": "Bestellung erfassen", "url": "purchase_pos", "icon": "fas fa-truck-loading", "permissions": ["auth.view_user"]},
+            {"name": "Bestellung erfassen", "url": "purchase_pos", "icon": "fas fa-truck-loading text-primary", "permissions": ["auth.view_user"]},
             # 3. Lager (Scanner hierhin verschoben und umbenannt)
-            {"name": "Lagerverwaltung", "url": "/core/scanner/", "icon": "fas fa-qrcode", "permissions": ["auth.view_user"]},
+            {"name": "Lagerverwaltung", "url": "/core/scanner/", "icon": "fas fa-qrcode text-warning", "permissions": ["auth.view_user"]},
         ],
         # Core hat keine Custom Links mehr, nur noch die Modelle (Stammdaten)
     },

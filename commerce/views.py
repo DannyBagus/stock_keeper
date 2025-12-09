@@ -1,5 +1,6 @@
 from django.shortcuts import render, get_object_or_404, redirect
 from django.http import JsonResponse, HttpResponse
+from django.contrib import admin
 from django.views.decorators.http import require_POST, require_GET
 from django.contrib.admin.views.decorators import staff_member_required
 from django.db import transaction
@@ -14,13 +15,24 @@ from .utils import render_to_pdf
 @staff_member_required
 def pos_view(request):
     """Rendert die Haupt-Kassen-Oberfläche"""
-    return render(request, 'commerce/pos.html')
+    # FIX: Admin-Kontext laden
+    context = admin.site.each_context(request)
+    context.update({'title': 'Kasse (POS)'})
+    return render(request, 'commerce/pos.html', context)
 
 @staff_member_required
 def purchase_pos_view(request):
     """Rendert die Einkaufs-Oberfläche"""
     suppliers = Supplier.objects.all().order_by('name')
-    return render(request, 'commerce/purchase_pos.html', {'suppliers': suppliers})
+    
+    # FIX: Admin-Kontext laden und Daten hinzufügen
+    context = admin.site.each_context(request)
+    context.update({
+        'suppliers': suppliers,
+        'title': 'Bestellung erfassen'
+    })
+    
+    return render(request, 'commerce/purchase_pos.html', context)
 
 @staff_member_required
 @require_GET
