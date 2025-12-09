@@ -1,0 +1,83 @@
+<!-- Wir definieren die Daten direkt im HTML, um Lade-Probleme zu vermeiden -->
+<div class="form-group" 
+     x-data="{
+        isDragging: false,
+        fileName: null,
+        // Prüfen, ob initial schon ein Wert da ist
+        initialFile: {% if widget.is_initial %}true{% else %}false{% endif %},
+        initialUrl: '{% if widget.is_initial %}{{ widget.value.url }}{% endif %}',
+        initialName: '{% if widget.is_initial %}{{ widget.value }}{% endif %}',
+
+        handleDrop(e) {
+            this.isDragging = false;
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                this.updateInput(files);
+            }
+        },
+
+        handleFileSelect(e) {
+            const files = e.target.files;
+            if (files.length > 0) {
+                this.fileName = files[0].name;
+            }
+        },
+
+        updateInput(files) {
+            // Wir setzen die Files auf das versteckte Input Feld
+            const input = document.getElementById('{{ widget.attrs.id }}');
+            input.files = files;
+            this.fileName = files[0].name;
+        }
+     }">
+    
+    <!-- Verstecktes echtes Input Feld -->
+    <input type="{{ widget.type }}" 
+           name="{{ widget.name }}" 
+           id="{{ widget.attrs.id }}" 
+           {% if widget.attrs.multiple %}multiple{% endif %}
+           class="d-none" 
+           @change="handleFileSelect">
+
+    <!-- Die Dropzone -->
+    <div class="dropzone p-4 border rounded text-center position-relative"
+         :class="isDragging ? 'bg-light border-primary' : 'border-secondary'"
+         style="border-style: dashed !important; border-width: 2px !important; cursor: pointer; transition: all 0.2s;"
+         @dragover.prevent="isDragging = true"
+         @dragleave.prevent="isDragging = false"
+         @drop.prevent="handleDrop($event)"
+         @click="document.getElementById('{{ widget.attrs.id }}').click()">
+        
+        <!-- ZUSTAND 1: Datei wurde gerade ausgewählt ODER existiert bereits -->
+        <div x-show="fileName || initialFile">
+            <i class="fas fa-file-pdf fa-3x text-danger mb-2"></i>
+            
+            <!-- Dateiname anzeigen (Entweder neu oder existierend) -->
+            <h5 class="text-dark" x-text="fileName || initialName" style="word-break: break-all;"></h5>
+            
+            <p class="text-muted small mb-0">Klicken oder ziehen, um zu ändern</p>
+            
+            <!-- Link zur aktuellen Datei (nur wenn keine neue ausgewählt wurde) -->
+            <div x-show="!fileName && initialFile" class="mt-3">
+                <a :href="initialUrl" target="_blank" @click.stop class="btn btn-sm btn-outline-primary">
+                    <i class="fas fa-external-link-alt"></i> Öffnen
+                </a>
+                
+                <!-- Löschen Checkbox (Django Standard Feature) -->
+                {% if widget.is_initial %}
+                <div class="form-check mt-2 d-inline-block ml-2" @click.stop>
+                    <input type="checkbox" name="{{ widget.checkbox_name }}" id="{{ widget.checkbox_id }}" class="form-check-input">
+                    <label class="form-check-label text-danger small" for="{{ widget.checkbox_id }}">Löschen</label>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- ZUSTAND 2: Leer -->
+        <div x-show="!fileName && !initialFile">
+            <i class="fas fa-cloud-upload-alt fa-3x text-muted mb-2"></i>
+            <h5 class="text-dark">Datei hier ablegen</h5>
+            <p class="text-muted small mb-0">oder klicken zum Auswählen</p>
+        </div>
+    </div>
+</div>

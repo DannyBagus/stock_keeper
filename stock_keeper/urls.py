@@ -22,6 +22,7 @@ urlpatterns += [
     }),
 ]
 
-
+# Statische Dateien (CSS/JS) werden bereits von Whitenoise behandelt,
+# aber lokal brauchen wir das hier weiterhin:
 if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+    urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)

@@ -5,7 +5,7 @@ from django.contrib import messages
 from .models import PurchaseOrder, PurchaseOrderItem, Sale, SaleItem 
 from .utils import render_to_pdf
 from core.models import Product, Supplier 
-from .forms import SaleItemFormSet 
+from .forms import SaleItemFormSet , PurchaseOrderForm
 
 # --- Inlines (Tabellen innerhalb der Hauptmaske) ---
 
@@ -34,6 +34,8 @@ class SaleItemInline(admin.TabularInline):
 
 @admin.register(PurchaseOrder)
 class PurchaseOrderAdmin(admin.ModelAdmin):
+    form = PurchaseOrderForm # Das Custom Formular mit dem Dropzone Widget nutzen
+
     actions = ['action_mark_as_received', 'action_generate_pdf']
     inlines = [PurchaseOrderItemInline]
     
@@ -67,10 +69,10 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
             # Status sperren NUR wenn 'Ware eingegangen' oder 'Storniert'
             # Im Status 'Bestellt' (ORDERED) bleibt es bearbeitbar.
             if obj.status in [PurchaseOrder.Status.RECEIVED, PurchaseOrder.Status.CANCELLED]:
-                return ('status', 'created_by', 'is_booked') 
+                return ('status', 'created_by') 
             
             # Im normalen Edit-Modus soll 'created_by' und 'is_booked' meist nur informativ sein
-            return ('created_by', 'is_booked')
+            return ('created_by')
             
         return ()
 

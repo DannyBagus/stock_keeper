@@ -1,7 +1,9 @@
 from django import forms
-from django.forms.models import BaseInlineFormSet
+from django.forms.models import BaseInlineFormSet, ModelForm
 from decimal import Decimal
 from django.core.exceptions import ObjectDoesNotExist
+from .models import PurchaseOrder # Import hinzufügen
+from core.widgets import DragAndDropFileWidget 
 
 class SaleItemFormSet(BaseInlineFormSet):
     """
@@ -31,3 +33,12 @@ class SaleItemFormSet(BaseInlineFormSet):
             # Setze Preis, falls leer
             if instance.unit_price_gross is None:
                 instance.unit_price_gross = product.sales_price
+                
+# NEU: Das Formular für PurchaseOrder
+class PurchaseOrderForm(ModelForm):
+    class Meta:
+        model = PurchaseOrder
+        fields = '__all__'
+        widgets = {
+            'invoice_document': DragAndDropFileWidget(),
+        }
