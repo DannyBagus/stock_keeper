@@ -183,7 +183,7 @@
                 this.saveState('SUMUP');
 
                 const total = this.cartTotal.toFixed(2);
-                const title = 'Kauf-' + new Date().getTime(); 
+                const title = 'SupportElle-' + new Date().getTime(); 
                 const currency = 'CHF';
                 
                 const url = `sumupmerchant://pay/1.0?affiliate-key=${this.sumUpAffiliateKey}&app-id=ch.stockkeeper.app&total=${total}&currency=${currency}&title=${title}&skip-screen-success=true`;
