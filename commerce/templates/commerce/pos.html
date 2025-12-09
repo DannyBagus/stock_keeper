@@ -13,11 +13,9 @@
             noResults: false,
             isLoading: false,
             
-            // Modal States
             showCheckoutModal: false,
             showSuccessModal: false,
             
-            // Scanner Logic
             scanner: null,
             showScannerControls: false,
             scanCooldown: false, 
@@ -28,22 +26,22 @@
             toast: { show: false, message: '', type: 'success' },
 
             paymentMethod: 'CASH', 
+            // Hier den echten Key eintragen!
             sumUpAffiliateKey: 'sup_afk_fhpRcEDdXRZouibkztggzW5qwt3DbL4a', 
 
             init() {
-                // 1. Versuchen, Status wiederherzustellen (falls wir von SumUp App kommen)
+                // Wiederherstellen VOR Scanner Start
                 this.restoreState();
-                
-                // 2. Scanner starten
                 this.startScanner();
             },
 
-            // --- PERSISTENCE LOGIC (NEU) ---
+            // --- STATE MANAGEMENT ---
             saveState(method) {
-                // Speichert Warenkorb und Payment-Wunsch im Browser Storage
-                localStorage.setItem('pos_cart', JSON.stringify(this.cart));
-                localStorage.setItem('pos_payment_method', method);
-                localStorage.setItem('pos_active', 'true');
+                try {
+                    localStorage.setItem('pos_cart', JSON.stringify(this.cart));
+                    localStorage.setItem('pos_payment_method', method);
+                    localStorage.setItem('pos_active', 'true');
+                } catch(e) { console.error("Save state failed", e); }
             },
 
             clearState() {
@@ -62,18 +60,16 @@
                             this.cart = savedCart;
                             this.paymentMethod = savedMethod || 'CASH';
                             
-                            // Wenn wir von SumUp kommen (Method ist SUMUP), öffnen wir direkt das Modal wieder
+                            // Wenn SumUp gewählt war, Modal direkt wieder öffnen
                             if (this.paymentMethod === 'SUMUP') {
                                 this.showCheckoutModal = true;
-                                this.showNotification('Warenkorb nach App-Wechsel wiederhergestellt.', 'success');
+                                this.showNotification('Warenkorb wiederhergestellt.', 'info');
                             }
                         }
-                    } catch (e) {
-                        console.error("Fehler beim Wiederherstellen:", e);
-                    }
+                    } catch (e) { console.error("Restore failed", e); }
                 }
             },
-            // -------------------------------
+            // ------------------------
 
             showNotification(message, type = 'success') {
                 this.toast.message = message;
@@ -177,13 +173,12 @@
     
             initiateCheckout() {
                 if (this.cart.length === 0) return;
-                this.paymentMethod = 'CASH'; // Reset Default
+                this.paymentMethod = 'CASH'; 
                 this.showCheckoutModal = true;
             },
 
-            // SumUp App starten via Deep Link
             startSumUpPayment() {
-                // ZUERST speichern wir den State, weil wir die App verlassen
+                // FIX: Status speichern bevor die App verlassen wird!
                 this.paymentMethod = 'SUMUP';
                 this.saveState('SUMUP');
 
@@ -191,8 +186,6 @@
                 const title = 'Kauf-' + new Date().getTime(); 
                 const currency = 'CHF';
                 
-                // Wir fügen einen Return-Parameter hinzu, falls SumUp das unterstützt,
-                // ansonsten verlässt man sich auf manuelles Zurückkehren.
                 const url = `sumupmerchant://pay/1.0?affiliate-key=${this.sumUpAffiliateKey}&app-id=ch.stockkeeper.app&total=${total}&currency=${currency}&title=${title}&skip-screen-success=true`;
                 
                 window.location.href = url;
@@ -210,6 +203,7 @@
                         },
                         body: JSON.stringify({ 
                             items: this.cart,
+                            // FIX: Hier wird die Methode gesendet
                             payment_method: this.paymentMethod 
                         })
                     });
@@ -217,9 +211,7 @@
                     const result = await response.json();
                     
                     if (result.success) {
-                        // Erfolg! State löschen
-                        this.clearState();
-                        
+                        this.clearState(); // FIX: State aufräumen
                         this.cart = [];
                         this.createdSaleId = result.sale_id;
                         this.createdPdfUrl = result.pdf_url;
@@ -246,7 +238,7 @@
                 this.createdSaleId = null;
                 this.createdPdfUrl = '';
                 this.searchQuery = '';
-                this.clearState(); // Sicherstellen dass alles sauber ist
+                this.clearState(); 
             }
         }
     }

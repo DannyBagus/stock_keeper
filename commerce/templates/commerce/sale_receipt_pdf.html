@@ -17,163 +17,172 @@
             }
         }
         
-        /* MODERN FONT & TYPOGRAPHY */
+        /* TYPOGRAPHY */
         body {
-            /* Verwenden Sie eine moderne, serifenlose Schriftart */
-            font-family: 'Helvetica', 'Roboto', sans-serif;
-            font-size: 9pt; /* Kleinere, kompaktere Schrift */
-            color: #333;
-        }
-
-        /* HEADER & METADATA */
-        .header {
-            border-bottom: 1px solid #ddd;
-            padding-bottom: 10px;
-            margin-bottom: 30px;
-            display: flex; 
-        }
-        .logo-box {
-            width: 50%;
-            float: left;
-            font-size: 16pt;
-            font-weight: bold;
-            color: #004a99; /* Akzentfarbe */
-        }
-        .metadata-box {
-            width: 50%;
-            float: right;
-            text-align: right;
+            font-family: Helvetica, sans-serif; 
             font-size: 10pt;
-        }
-        .title {
-            font-size: 24pt;
-            font-weight: 300;
-            color: #555;
-            margin-bottom: 0;
-            line-height: 1.2;
-        }
-        .subtitle {
-            font-weight: bold;
-            margin-top: 5px;
-            color: #004a99;
-        }
-        .info-block {
-            width: 100%;
-            margin-top: 20px;
-            margin-bottom: 20px;
-        }
-        .address-box {
-            width: 45%;
-            float: right;
-            border-left: 3px solid #ddd;
-            padding-left: 15px;
-            font-size: 9pt;
-        }
-        .data-box {
-            width: 45%;
-            float: left;
-            font-size: 9pt;
-            line-height: 1.6;
-        }
-        .data-box strong {
-            display: inline-block;
-            width: 120px; /* Feste Breite für Beschriftung */
-            font-weight: 600;
-        }
-
-
-        /* TABLE STYLING (SIMPLIFIED / BOOKTABS) */
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 30px;
-            font-size: 9pt;
-        }
-        th {
-            background-color: white;
             color: #333;
-            border-bottom: 2px solid #333; /* Dicke Linie unten */
-            padding: 10px 8px;
-            text-align: left;
+            line-height: 1.3;
+        }
+
+        /* HEADER TABLE */
+        table.header-table {
+            width: 100%;
+            margin-bottom: 5px;
+            border: none;
+        }
+        td.logo-cell {
+            width: 50%;
+            vertical-align: top;
+            /* Font-Size entfernt, da Bild genutzt wird */
+        }
+        td.address-cell {
+            width: 50%;
+            text-align: right;
+            vertical-align: top;
+            font-size: 9pt;
+            color: #555;
+        }
+        .company-name {
             font-weight: bold;
+            font-size: 10pt;
+            color: #333;
+            margin-bottom: 2px;
+        }
+
+        /* INFO TABLE */
+        table.info-table {
+            width: 100%;
+            margin-bottom: 0; /* Abstand wird durch items-table margin erzeugt */
+            font-size: 9pt;
+            border: none;
+        }
+        .info-label {
+            font-weight: bold;
+            color: #aa8684;
+            font-size: 8pt;
             text-transform: uppercase;
         }
-        td {
-            border-bottom: 1px solid #eee; /* Leichte Trennlinie zwischen Zeilen */
-            padding: 8px;
-            text-align: left;
+
+        /* ITEMS TABLE */
+        table.items-table {
+            width: 100%;
+            border-collapse: collapse;
+            /* HIER: 2cm Abstand nach oben wie gewünscht */
+            margin-top: 20mm; 
+            font-size: 9pt;
+        }
+        .items-table th {
+            color: #aa8684;
+            border-bottom: 1px solid #aa8684;
+            padding: 5px 2px;
+            text-align: left; /* Default links */
+            font-weight: bold;
+            text-transform: uppercase;
+            font-size: 8pt;
+        }
+        /* Spezifische Ausrichtung für THs mit Klasse text-right */
+        .items-table th.text-right {
+            text-align: right;
         }
         
-        /* SUMMARY TABLE */
-        .summary-table {
-            width: 40%;
-            float: right;
-            margin-top: 20px;
+        .items-table td {
+            border-bottom: 1px solid #eee; 
+            padding: 6px 2px;
+            vertical-align: top;
         }
+        
+        /* ALIGNMENT HELPERS */
+        .text-right { text-align: right; }
+        .text-center { text-align: center; }
+        
+        /* SUMMARY STYLES */
         .summary-row td {
-            border: none;
-            padding: 3px 0;
+            border-bottom: 1px solid #eee;
+            padding: 4px 2px;
         }
-        .gross-total-row td {
+        .summary-total-cell {
+            border-top: 1px solid #aa8684; 
+            border-bottom: 3px double #aa8684; 
             font-weight: bold;
-            border-top: 1px solid #333; /* Leichte Trennlinie oben */
-            border-bottom: 3px double #004a99; /* Doppellinie unten als Abschluss */
-            font-size: 10pt;
+            font-size: 11pt;
+            color: #333;
+            padding-top: 5px;
+            padding-bottom: 5px;
         }
     </style>
 </head>
 <body>
 
+    <!-- FOOTER CONTENT -->
+    <div id="footer-content">
+        <!-- Robuste Trennlinie für den Footer -->
+        <hr style="color: #ddd; background-color: #ddd; height: 1px; border: 0; margin-bottom: 5px;">
+        <p style="text-align: center; font-size: 8pt; color: #aa8684; margin: 0;">
+            Danke für Ihren Einkauf bei Support Elle.<br>
+            Es gelten unsere AGB.
+        </p>
+    </div>
+
     <!-- HEADER BLOCK -->
-    <div class="header">
-        <div class="logo-box">SupportElle</div>
-        <div class="metadata-box">
-            <div class="title">QUITTUNG / BELEG</div>
-            <div class="subtitle">#{{ sale.id }}</div>
-        </div>
-    </div>
-    <div style="clear: both;"></div>
+    <table class="header-table">
+        <tr>
+            <td class="logo-cell">
+                <!-- LOGO EINBINDUNG -->
+                <!-- Stellen Sie sicher, dass 'core/static/img/logo.png' existiert -->
+                <img src="{% static 'img/SupportElle_Logo-4.webp' %}" alt="SupportElle" style="height: 200px; width: auto;">
+            </td>
+            <td class="address-cell">
+                <div class="company-name">Support Elle (by Mileja GmbH)</div>
+                Rittergasse 20<br>
+                CH-4051 Basel<br>
+                UID: CHE-170.569.062<br>
+                Web: shop.mileja.ch
+            </td>
+        </tr>
+    </table>
 
+    <!-- TRENNLINIE (Header) -->
+    <hr style="color: #aa8684; background-color: #aa8684; height: 1px; border: 0; margin-bottom: 15px;">
 
-    <!-- INFO BLOCK -->
-    <div class="info-block">
-        
-        <!-- Rechter Block: Ihre Daten (als Verkäufer) -->
-        <div class="address-box">
-            <p style="font-weight: bold; color: #004a99; margin-bottom: 5px;">VERKÄUFER</p>
-            <p>Mileja GmbH<br>
-            Rittergasse 20<br>
-            4051 Basel, Schweiz</p>
-            <!-- Placeholder für Kundendaten, falls später implementiert -->
-        </div>
+    <!-- BELEG INFOS -->
+    <table class="info-table">
+        <tr>
+            <td width="33%">
+                <span class="info-label">Belegdatum</span><br>
+                {{ formatted_date }}
+            </td>
+            <td width="33%">
+                <span class="info-label">Bedienung</span><br>
+                {{ formatted_creator }}
+            </td>
+            <td width="34%" class="text-right">
+                <span class="info-label">Beleg-Nr.</span><br>
+                #{{ sale.id }}
+            </td>
+        </tr>
+        <tr>
+            <td colspan="3" style="padding-top: 10px;">
+                <span class="info-label">Zahlungsmethode:</span>
+                {{ sale.get_payment_method_display }}
+                {% if sale.transaction_id %}
+                    <span style="color: #888; font-size: 8pt;"> (Trx: {{ sale.transaction_id }})</span>
+                {% endif %}
+            </td>
+        </tr>
+    </table>
 
-        <!-- Linker Block: Verkaufsdaten -->
-        <div class="data-box">
-            <p><strong>Belegdatum:</strong> {{ formatted_date }}</p>
-            <p><strong>Verkaufstyp:</strong> Manueller Verkauf</p>
-            <p><strong>Bedienung:</strong> {{ formatted_creator }}</p>
-        </div>
-
-    </div>
-    <div style="clear: both;"></div>
-    
-
-    <!-- ITEMS TABLE -->
-    <table>
+    <!-- ARTIKEL TABELLE -->
+    <table class="items-table">
         <thead>
             <tr>
-                <!-- POS: 5% -->
-                <th style="width: 5%;">Pos.</th> 
-                <!-- SKU/EAN: 15% -->
-                <th style="width: 15%;">SKU / EAN</th> 
-                <!-- Produktbezeichnung: 37% -->
-                <th style="width: 37%;">Produktbezeichnung</th>
-                <!-- Menge: 10% -->
-                <th style="width: 10%; text-align: center;">Menge</th>
-                <!-- Preis/Einheit: 17% -->
-                <th style="width: 17%; text-align: right;">Preis/Einheit (CHF)</th> 
-                <!-- Gesamt: 16% -->
-                <th style="width: 16%; text-align: right;">Gesamt (CHF)</th> 
+                <th width="5%">Pos.</th> 
+                <th width="15%">Art. Nr.</th> 
+                <th width="45%">Artikel</th>
+                <th width="10%" class="text-center">Menge</th>
+                <!-- HIER: Klasse text-right hinzugefügt für Rechtsbündigkeit -->
+                <th width="12%" class="text-right">Preis</th> 
+                <th width="13%" class="text-right">Total</th> 
             </tr>
         </thead>
         <tbody>
@@ -182,44 +191,32 @@
                 <td>{{ forloop.counter }}</td>
                 <td>{{ item.product.sku|default:item.product.ean }}</td>
                 <td>{{ item.product.name }}</td>
-                <td style="text-align: center;">{{ item.quantity }}</td>
-                <td style="text-align: right;">{{ item.unit_price_gross|floatformat:2 }} CHF</td>
-                <td style="text-align: right;">{{ item.total_price_gross|floatformat:2 }} CHF</td>
+                <td class="text-center">{{ item.quantity }}</td>
+                <td class="text-right">{{ item.unit_price_gross|floatformat:2 }}</td>
+                <td class="text-right">{{ item.total_price_gross|floatformat:2 }}</td>
             </tr>
             {% endfor %}
-        </tbody>
-    </table>
-    
-    <!-- SUMMARY TABLE -->
-    <table class="summary-table">
-        <tbody>
-            <!-- NETTO Summe -->
-            <tr class="summary-row">
-                <td style="width: 60%; font-weight: 500;">GESAMTSUMME NETTO (Exkl. MwSt):</td>
-                <td style="width: 40%; text-align: right;">{{ total_cost_net|floatformat:2 }} CHF</td>
-            </tr>
             
-            <!-- MwSt-Zeile -->
-            <tr class="summary-row">
-                <td style="width: 60%; font-weight: 500;">Enthaltene MwSt. ({{ mwst_rate_percent }}%):</td>
-                <td style="width: 40%; text-align: right;">{{ total_mwst|floatformat:2 }} CHF</td>
+            <!-- ABSTAND -->
+            <tr>
+                <td colspan="6" style="border: none; height: 10px;"></td>
             </tr>
-            
-            <!-- BRUTTO Summe -->
-            <tr class="gross-total-row">
-                <td style="width: 60%; font-weight: bold;">GESAMTBETRAG (Inkl. MwSt):</td>
-                <td style="width: 40%; text-align: right;">{{ total_cost_gross|floatformat:2 }} CHF</td>
+
+            <!-- ZUSAMMENFASSUNG -->
+            <tr class="summary-row">
+                <td colspan="5" class="text-right">Netto (exkl. MwSt):</td>
+                <td class="text-right">{{ total_cost_net|floatformat:2 }}</td>
+            </tr>
+            <tr class="summary-row">
+                <td colspan="5" class="text-right" style="color: #888; font-size: 8pt;">MwSt ({{ mwst_rate_percent }}%):</td>
+                <td class="text-right" style="color: #888; font-size: 8pt;">{{ total_mwst|floatformat:2 }}</td>
+            </tr>
+            <tr>
+                <td colspan="5" class="text-right summary-total-cell" style="border-left: none; border-right: none;">TOTAL CHF</td>
+                <td class="text-right summary-total-cell" style="border-left: none; border-right: none;">{{ total_cost_gross|floatformat:2 }}</td>
             </tr>
         </tbody>
     </table>
-    <div style="clear: both;"></div>
-
-
-    <!-- FOOTER -->
-    <div id="footer-content">
-        <hr style="border: none; border-top: 1px solid #ddd;">
-        <p style="text-align: center; font-size: 8pt; color: #888;">Danke für Ihren Einkauf. Beleg #{{ sale.id }} | Seite <pdf:pagenumber> von <pdf:pagecount></pdf:pagecount></pdf:pagenumber></p>
-    </div>
 
 </body>
 </html>
