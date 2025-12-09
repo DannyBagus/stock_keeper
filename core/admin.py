@@ -3,8 +3,8 @@ from .models import Product, Category, Supplier, Vat
 
 @admin.register(Category)
 class CategoryAdmin(admin.ModelAdmin):
-    list_display = ('name',)
-    search_fields = ('name',)
+    list_display = ('name', 'sku_prefix')
+    search_fields = ('name', 'sku_prefix')
 
 @admin.register(Supplier)
 class SupplierAdmin(admin.ModelAdmin):
