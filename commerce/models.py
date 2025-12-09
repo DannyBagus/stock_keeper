@@ -103,6 +103,14 @@ class Sale(models.Model):
     total_amount_net = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     total_amount_gross = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     
+    class PaymentMethod(models.TextChoices):
+        CASH = 'CASH', 'Barzahlung'
+        SUMUP = 'SUMUP', 'SumUp (Karte)'
+        TWINT = 'TWINT', 'Twint' # Optional für später
+
+    payment_method = models.CharField(max_length=20, choices=PaymentMethod.choices, default=PaymentMethod.CASH)
+    transaction_id = models.CharField(max_length=100, blank=True, null=True, help_text="Transaktions-ID von SumUp/Twint")
+    
     # Optional: User für Audit Log
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
 

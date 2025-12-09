@@ -122,10 +122,12 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
 class SaleAdmin(admin.ModelAdmin):
     actions = ['action_generate_receipt'] 
     
-    list_display = ('id', 'date', 'total_amount_gross')
-    list_filter = ('date',)
+    # NEU: Payment Method anzeigen
+    list_display = ('id', 'date', 'total_amount_gross', 'payment_method')
+    list_filter = ('date', 'payment_method')
     inlines = [SaleItemInline] 
-    readonly_fields = ('total_amount_net', 'total_amount_gross')
+    # Transaction ID schreibgeschützt anzeigen
+    readonly_fields = ('total_amount_net', 'total_amount_gross', 'transaction_id')
     
     def save_related(self, request, form, formsets, change):
         super().save_related(request, form, formsets, change)
