@@ -6,6 +6,7 @@ from django.conf import settings
 from django.shortcuts import render, get_object_or_404, redirect
 from django.http import JsonResponse, HttpResponse, HttpResponseForbidden
 from django.contrib import admin
+from django.contrib.auth import get_user_model
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST, require_GET
 from django.contrib.admin.views.decorators import staff_member_required
@@ -190,12 +191,23 @@ def shopify_webhook(request):
         shopify_order_id = str(data.get('id'))
         if Sale.objects.filter(transaction_id=shopify_order_id).exists():
             return HttpResponse("Order already processed", status=200)
+                    
+        # 1. Versuchen, den System-User zu laden
+        User = get_user_model()
+        system_user = None
+        try:
+            system_user = User.objects.get(username='shopify_bot')
+        except User.DoesNotExist:
+            # Fallback: Wenn User noch nicht existiert, nehmen wir None 
+            # oder erstellen ihn on-the-fly (weniger empfohlen wegen Seiteneffekten)
+            pass
 
         # FIX: Channel auf WEB setzen!
         sale = Sale.objects.create(
             payment_method=Sale.PaymentMethod.SHOPIFY_PAYMENTS, # Nutzt den Wert 'SHOPIFY'
             transaction_id=shopify_order_id,
-            channel=Sale.SalesChannel.WEB # <--- WICHTIG: Online Kanal setzen
+            channel=Sale.SalesChannel.WEB, # <--- WICHTIG: Online Kanal setzen
+            created_by=system_user
         )
 
         for line_item in data.get('line_items', []):
