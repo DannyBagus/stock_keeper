@@ -34,8 +34,12 @@
             init() {
                 this.restoreState();
                 this.startCameraScanner();
-                // Fokus auf das Feld setzen beim Start
                 this.$nextTick(() => this.focusInput());
+
+                // FIX: Automatische Speicherung bei JEDER Warenkorb-Änderung
+                this.$watch('cart', () => {
+                    this.saveState(this.paymentMethod);
+                });
             },
 
             // Helper: Fokus immer auf das Eingabefeld setzen (Wichtig für Handscanner!)
@@ -50,6 +54,45 @@
                 this.toast.show = true;
                 setTimeout(() => { this.toast.show = false; }, 3000);
             },
+
+            // --- STATE MANAGEMENT ---
+            saveState(method) {
+                try {
+                    localStorage.setItem('pos_cart', JSON.stringify(this.cart));
+                    // Wir speichern die aktuelle Methode oder 'CASH' als Fallback
+                    localStorage.setItem('pos_payment_method', method || 'CASH');
+                    localStorage.setItem('pos_active', 'true');
+                } catch(e) { console.error("Save state failed", e); }
+            },
+
+            clearState() {
+                localStorage.removeItem('pos_cart');
+                localStorage.removeItem('pos_payment_method');
+                localStorage.removeItem('pos_active');
+            },
+
+            restoreState() {
+                if (localStorage.getItem('pos_active') === 'true') {
+                    try {
+                        const savedCart = JSON.parse(localStorage.getItem('pos_cart'));
+                        const savedMethod = localStorage.getItem('pos_payment_method');
+                        
+                        if (savedCart && Array.isArray(savedCart)) {
+                            this.cart = savedCart;
+                            this.paymentMethod = savedMethod || 'CASH';
+                            
+                            // Wenn wir von SumUp kommen (Method ist SUMUP), öffnen wir direkt das Modal wieder
+                            if (this.paymentMethod === 'SUMUP' && this.cart.length > 0) {
+                                this.showCheckoutModal = true;
+                                this.showNotification('Warenkorb & Zahlung wiederhergestellt.', 'info');
+                            } else if (this.cart.length > 0) {
+                                this.showNotification('Warenkorb wiederhergestellt.', 'info');
+                            }
+                        }
+                    } catch (e) { console.error("Restore failed", e); }
+                }
+            },
+            // ------------------------
 
             // Kamera Scanner (als Fallback / Hybrid)
             startCameraScanner() {
@@ -173,39 +216,9 @@
                 this.showCheckoutModal = true;
             },
 
-            saveState(method) {
-                try {
-                    localStorage.setItem('pos_cart', JSON.stringify(this.cart));
-                    localStorage.setItem('pos_payment_method', method);
-                    localStorage.setItem('pos_active', 'true');
-                } catch(e) {}
-            },
-
-            clearState() {
-                localStorage.removeItem('pos_cart');
-                localStorage.removeItem('pos_payment_method');
-                localStorage.removeItem('pos_active');
-            },
-
-            restoreState() {
-                if (localStorage.getItem('pos_active') === 'true') {
-                    try {
-                        const savedCart = JSON.parse(localStorage.getItem('pos_cart'));
-                        const savedMethod = localStorage.getItem('pos_payment_method');
-                        if (savedCart && savedCart.length > 0) {
-                            this.cart = savedCart;
-                            this.paymentMethod = savedMethod || 'CASH';
-                            if (this.paymentMethod === 'SUMUP') {
-                                this.showCheckoutModal = true;
-                                this.showNotification('Warenkorb wiederhergestellt.', 'info');
-                            }
-                        }
-                    } catch (e) {}
-                }
-            },
-
             startSumUpPayment() {
                 this.paymentMethod = 'SUMUP';
+                // Hier wird explizit mit 'SUMUP' Status gespeichert
                 this.saveState('SUMUP');
                 const total = this.cartTotal.toFixed(2);
                 const title = 'Kauf-' + new Date().getTime(); 
@@ -220,7 +233,10 @@
                     const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
                     const response = await fetch('/commerce/api/checkout/', {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRFToken': csrfToken
+                        },
                         body: JSON.stringify({ items: this.cart, payment_method: this.paymentMethod })
                     });
                     const result = await response.json();
@@ -282,14 +298,18 @@
     /* Modals */
     .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 9999; }
     .modal-box { background: white; border-radius: 8px; width: 90%; max-width: 500px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); overflow: hidden; animation: fadeIn 0.2s ease-out; }
-    @keyframes fadeIn { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
-
-    /* Toasts */
-    .toast-notification { position: fixed; bottom: 20px; right: 20px; padding: 15px 25px; border-radius: 8px; color: white; font-weight: bold; box-shadow: 0 4px 12px rgba(0,0,0,0.2); z-index: 10000; display: flex; align-items: center; gap: 10px; animation: slideIn 0.3s ease-out; max-width: 90%; }
+    
+    /* TOAST STYLES */
+    .toast-notification {
+        position: fixed; bottom: 20px; right: 20px; padding: 15px 25px; border-radius: 8px;
+        color: white; font-weight: bold; box-shadow: 0 4px 12px rgba(0,0,0,0.2); z-index: 10000;
+        display: flex; align-items: center; gap: 10px; animation: slideIn 0.3s ease-out; max-width: 90%;
+    }
     .toast-success { background-color: #28a745; }
     .toast-error { background-color: #dc3545; }
     .toast-warning { background-color: #ffc107; color: #333; }
     @keyframes slideIn { from { transform: translateY(100px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
 </style>
 {% endblock %}
 
@@ -365,15 +385,16 @@
                             <input type="range" id="zoom-slider" class="zoom-slider custom-range" min="1" max="5" step="0.1" value="1">
                             <i class="fas fa-search-plus ml-2 text-muted"></i>
                         </div>
+                        <div class="text-center mt-1"><small class="text-muted">Zoom einstellen für Fokus</small></div>
                     </div>
                 </div>
             </div>
 
-            <!-- Suchfeld (Fokus wichtig für Handscanner!) -->
+            <!-- Suchfeld -->
             <div class="search-box">
-                <label for="search" class="h4 mb-3 d-block"><i class="fas fa-barcode"></i> Produkt Scannen (Handheld / Kamera)</label>
+                <label for="search" class="h4 mb-3 d-block"><i class="fas fa-keyboard"></i> Manuelle Eingabe</label>
                 <div class="input-group input-group-lg">
-                    <!-- autofocus und x-ref für Fokus-Management -->
+                    <!-- WICHTIG: autofocus und x-model -->
                     <input type="text" id="search-input" class="form-control" placeholder="EAN scannen oder tippen..." 
                            x-model="searchQuery" 
                            @keydown.enter.prevent="performSearch(true)" 
