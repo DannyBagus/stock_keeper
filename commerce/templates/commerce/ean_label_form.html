@@ -1,0 +1,34 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block content %}
+<div class="col-12 col-md-8 offset-md-2">
+    <div class="card card-primary card-outline">
+        <div class="card-header">
+            <h3 class="card-title"><i class="fas fa-barcode mr-2"></i> Scan-Liste erstellen</h3>
+        </div>
+        <div class="card-body">
+            <p class="text-muted">
+                Erstellen Sie eine Liste mit Barcodes für Produkte, die physisch schwer zu etikettieren sind (z.B. Café-Produkte, Kleinteile). 
+                Diese Liste kann an der Kasse ausgelegt und direkt gescannt werden.
+            </p>
+            
+            <form method="POST" target="_blank">
+                {% csrf_token %}
+                
+                <div class="form-group mt-3">
+                    <label for="{{ form.categories.id_for_label }}">{{ form.categories.label }}</label>
+                    {{ form.categories }}
+                    <small class="form-text text-muted">Halten Sie Strg (Windows) oder Cmd (Mac) gedrückt, um mehrere Kategorien zu wählen.</small>
+                </div>
+
+                <div class="mt-4">
+                    <button type="submit" class="btn btn-primary btn-lg btn-block">
+                        <i class="fas fa-print mr-2"></i> PDF Liste generieren
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -63,3 +63,13 @@ class AccountingReportForm(forms.Form):
         widget=forms.SelectMultiple(attrs={'class': 'form-control', 'style': 'height: 150px;'}),
         required=False
     )
+    
+# Fomrular für Barcode Etiketten
+class EanLabelForm(forms.Form):
+    categories = forms.ModelMultipleChoiceField(
+        label="Kategorien (Leer lassen für Alle)",
+        queryset=Category.objects.all(),
+        widget=forms.SelectMultiple(attrs={'class': 'form-control', 'style': 'height: 300px;'}),
+        required=False,
+        help_text="Wählen Sie die Kategorien, für die Sie eine Scan-Liste drucken möchten (z.B. 'Cafe', 'Gebäck')."
+    )

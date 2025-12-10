@@ -4,12 +4,11 @@ from . import views
 urlpatterns = [
     # POS
     path('pos/', views.pos_view, name='pos'),
-    
-    # Purchase UI
     path('purchase/', views.purchase_pos_view, name='purchase_pos'),
 
-    # Accounting Report (NEU)
+    # Reports & Tools
     path('accounting-report/', views.accounting_report_view, name='accounting_report'),
+    path('ean-labels/', views.ean_label_view, name='ean_labels'), # NEU
 
     # API Endpoints
     path('api/search/', views.api_search_product, name='api_product_search'),

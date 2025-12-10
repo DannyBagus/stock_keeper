@@ -1,0 +1,87 @@
+{% load static %}
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Scan-Liste</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 1.5cm;
+            @frame footer {
+                -pdf-frame-content: footer-content;
+                bottom: 0cm;
+                margin-left: 1.5cm;
+                margin-right: 1.5cm;
+                height: 1cm;
+            }
+        }
+        body {
+            font-family: Helvetica, sans-serif;
+            color: #333;
+        }
+        h1 { color: #aa8684; border-bottom: 2px solid #aa8684; padding-bottom: 5px; margin-bottom: 20px; }
+        
+        table { width: 100%; border-collapse: collapse; }
+        
+        /* Zeilen-Styling für bessere Lesbarkeit */
+        tr { border-bottom: 1px solid #ccc; }
+        
+        /* Zellen */
+        td { padding: 8px 5px; vertical-align: middle; }
+        th { text-align: left; background-color: #f0f0f0; padding: 8px 5px; border-bottom: 2px solid #666; }
+
+        .barcode-cell { text-align: center; }
+        .barcode-img { height: 40px; width: auto; } /* Höhe anpassen für Scanbarkeit */
+        .ean-text { font-size: 8pt; font-family: monospace; letter-spacing: 2px; margin-top: 2px; }
+        
+        .price { font-weight: bold; font-size: 11pt; }
+        .name { font-size: 11pt; font-weight: bold; }
+        .cat { font-size: 9pt; color: #666; font-style: italic; }
+    </style>
+</head>
+<body>
+
+    <h1>Scan-Liste / Kassenhilfe</h1>
+
+    <table>
+        <thead>
+            <tr>
+                <th width="40%">Produkt / Kategorie</th>
+                <th width="15%">Preis</th>
+                <th width="30%" style="text-align: center;">Barcode Scan</th>
+                <th width="15%" style="text-align: right;">EAN (Manuell)</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in product_list %}
+            <tr>
+                <td>
+                    <div class="name">{{ item.name }}</div>
+                    <div class="cat">{{ item.category }}</div>
+                </td>
+                <td class="price">
+                    {{ item.price|floatformat:2 }} CHF
+                </td>
+                <td class="barcode-cell">
+                    {% if item.barcode_image %}
+                        <img src="{{ item.barcode_image }}" class="barcode-img">
+                    {% else %}
+                        <span style="color:red; font-size:8pt;">Kein gültiger EAN</span>
+                    {% endif %}
+                </td>
+                <td style="text-align: right;">
+                    <div class="ean-text">{{ item.ean_text }}</div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div id="footer-content">
+        <p style="text-align: right; font-size: 8pt; color: #aaa;">
+            Erstellt am: {{ generation_date|date:"d.m.Y H:i" }} | Stock Keeper
+        </p>
+    </div>
+
+</body>
+</html>

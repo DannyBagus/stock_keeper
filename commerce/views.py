@@ -2,6 +2,7 @@ import hmac
 import hashlib
 import base64
 import json
+from io import BytesIO 
 from django.conf import settings
 from django.shortcuts import render, get_object_or_404, redirect
 from django.http import JsonResponse, HttpResponse, HttpResponseForbidden
@@ -13,11 +14,13 @@ from django.contrib.admin.views.decorators import staff_member_required
 from django.db import transaction
 from django.db.models import Q
 from decimal import Decimal
+import barcode # pip install python-barcode
+from barcode.writer import ImageWriter
 import json
 from .models import Product, Sale, SaleItem, PurchaseOrder, PurchaseOrderItem
 from core.models import Supplier
 from .utils import render_to_pdf
-from .forms import AccountingReportForm
+from .forms import AccountingReportForm, EanLabelForm
 from django.utils import timezone
 
 @staff_member_required
@@ -339,3 +342,93 @@ def accounting_report_view(request):
         'title': 'Umsatzliste & Buchhaltungs-Report'
     })
     return render(request, 'commerce/accounting_report_form.html', context)
+
+
+@staff_member_required
+def ean_label_view(request):
+    """
+    Generiert eine PDF-Liste mit EAN-Barcodes zum Scannen an der Kasse.
+    """
+    if request.method == 'POST':
+        form = EanLabelForm(request.POST)
+        if form.is_valid():
+            categories = form.cleaned_data['categories']
+            
+            # Produkte filtern
+            products = Product.objects.filter(is_active=True).exclude(ean='')
+            
+            if categories:
+                products = products.filter(category__in=categories)
+            
+            # Sortieren nach Kategorie und Name für bessere Übersicht
+            products = products.order_by('category__name', 'name')
+            
+            product_list = []
+            
+            # Barcode-Bilder generieren
+            for p in products:
+                # Wir müssen sicherstellen, dass die EAN gültig ist für den Generator
+                if not p.ean or not p.ean.isdigit():
+                    continue
+                    
+                try:
+                    # EAN13 Generator
+                    # ImageWriter wird benötigt, um ein Bild (kein SVG) für xhtml2pdf zu erstellen
+                    # Wir nutzen Code128 als Fallback, falls EAN13 Checksummen-Fehler wirft, 
+                    # aber für POS ist EAN13 Standard.
+                    ean_class = barcode.get_barcode_class('ean13')
+                    
+                    # render gibt ein BytesIO objekt zurück oder speichert file
+                    # Wir nutzen write auf einen Buffer
+                    buffer = BytesIO()
+                    
+                    # EAN13 erwartet 12 oder 13 Ziffern. 
+                    # write_text=False: Wir rendern den Text manuell im HTML, nicht im Bild (sauberer)
+                    my_ean = ean_class(p.ean, writer=ImageWriter())
+                    my_ean.write(buffer, options={"write_text": False, "module_height": 8.0, "quiet_zone": 1.0})
+                    
+                    # Base64 encodieren für Einbettung im HTML
+                    image_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+                    
+                    product_list.append({
+                        'name': p.name,
+                        'price': p.sales_price,
+                        'ean_text': p.ean,
+                        'category': p.category.name if p.category else "-",
+                        'barcode_image': f"data:image/png;base64,{image_base64}"
+                    })
+                    
+                except Exception as e:
+                    print(f"Fehler bei Barcode Generierung für {p.name}: {e}")
+                    # Produkt trotzdem listen, aber ohne Bild
+                    product_list.append({
+                        'name': p.name,
+                        'price': p.sales_price,
+                        'ean_text': p.ean,
+                        'category': p.category.name if p.category else "-",
+                        'barcode_image': None
+                    })
+
+            # PDF Generieren
+            context = {
+                'product_list': product_list,
+                'generation_date': timezone.now()
+            }
+            
+            response = render_to_pdf('commerce/ean_label_pdf.html', context)
+            if isinstance(response, HttpResponse) and response.status_code == 200:
+                filename = f"Scanliste_{timezone.now().strftime('%Y-%m-%d')}.pdf"
+                response['Content-Disposition'] = f'inline; filename="{filename}"'
+                return response
+            else:
+                return HttpResponse("Fehler beim Generieren des PDFs", status=500)
+
+    else:
+        form = EanLabelForm()
+
+    context = admin.site.each_context(request)
+    context.update({
+        'form': form,
+        'title': 'Scan-Liste / Etiketten drucken'
+    })
+    return render(request, 'commerce/ean_label_form.html', context)

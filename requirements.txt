@@ -20,6 +20,7 @@ pycparser==2.23
 pyHanko==0.32.0
 pyhanko-certvalidator==0.29.0
 pypdf==6.4.0
+python-barcode==0.16.1
 python-bidi==0.6.7
 python-dotenv==1.2.1
 PyYAML==6.0.3
