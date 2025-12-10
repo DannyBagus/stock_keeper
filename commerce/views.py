@@ -52,9 +52,11 @@ def api_search_product(request):
 
     results = []
     for p in products:
+        display_name = str(p)
+
         results.append({
             'id': p.id,
-            'name': p.name,
+            'name': display_name,
             'ean': p.ean,
             'price': float(p.sales_price), 
             'cost': float(p.cost_price),   
