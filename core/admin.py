@@ -56,8 +56,8 @@ class StockMovementInline(admin.TabularInline):
 
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
-    list_display = ('name', 'sku', 'stock_quantity', 'unit', 'sales_price', 'category', 'supplier')
-    list_filter = ('category', 'supplier', 'unit', 'is_active')
+    list_display = ('name', 'sku', 'stock_quantity', 'track_stock', 'unit', 'sales_price', 'category', 'supplier')
+    list_filter = ('category', 'supplier', 'unit', 'track_stock', 'is_active')
     search_fields = ('name', 'sku', 'ean', 'description')
     
     list_editable = ('sales_price',) 

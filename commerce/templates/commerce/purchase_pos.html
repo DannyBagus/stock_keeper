@@ -21,29 +21,32 @@
 
             scanner: null,
             showScannerControls: false,
-            scanCooldown: false, // NEU: Verhindert Mehrfachscans
+            scanCooldown: false,
 
-            // NEU: Toast State
             toast: { show: false, message: '', type: 'success' },
 
             init() {
-                // Startet den Scanner NUR hier über Alpine
-                this.startScanner();
+                this.startCameraScanner();
+                this.$nextTick(() => this.focusInput());
             },
 
-            // NEU: Helper Funktion für Toast-Meldungen
+            focusInput() {
+                const input = document.getElementById('search-input');
+                if(input) input.focus();
+            },
+
             showNotification(message, type = 'success') {
                 this.toast.message = message;
                 this.toast.type = type;
                 this.toast.show = true;
-                // Toast nach 3 Sekunden automatisch ausblenden
                 setTimeout(() => { this.toast.show = false; }, 3000);
             },
 
-            startScanner() {
+            startCameraScanner() {
                 const formats = [
                     Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8,
-                    Html5QrcodeSupportedFormats.QR_CODE, Html5QrcodeSupportedFormats.CODE_128
+                    Html5QrcodeSupportedFormats.QR_CODE, Html5QrcodeSupportedFormats.CODE_128,
+                    Html5QrcodeSupportedFormats.UPC_A
                 ];
                 if(this.scanner) return;
 
@@ -52,20 +55,12 @@
                     { facingMode: "environment" },
                     { fps: 15, qrbox: { width: 280, height: 180 }, aspectRatio: 1.0, formatsToSupport: formats, experimentalFeatures: { useBarCodeDetectorIfSupported: true } },
                     (decodedText) => {
-                        // NEU: Cooldown Check
                         if (this.scanCooldown) return;
-
                         if (this.searchQuery !== decodedText) {
-                            // Scanner für kurze Zeit sperren
                             this.scanCooldown = true;
-                            
                             this.searchQuery = decodedText;
                             if (navigator.vibrate) navigator.vibrate(200);
-                            
-                            // Suche ausführen
                             this.performSearch(true);
-
-                            // Nach 1.5 Sekunden wieder freigeben
                             setTimeout(() => { this.scanCooldown = false; }, 1500);
                         }
                     },
@@ -73,7 +68,7 @@
                 ).then(() => {
                     this.showScannerControls = true;
                     this.setupZoom();
-                }).catch(err => console.log("Scanner Error:", err));
+                }).catch(err => console.log("Kamera nicht aktiv (Handscanner Only Mode)"));
             },
 
             setupZoom() {
@@ -88,7 +83,6 @@
             async performSearch(isEnterPress) {
                 if (this.searchQuery.length < 2) return;
                 
-                // Falls Scanner aktiv, Cooldown setzen (falls nicht schon durch Scan passiert)
                 if (isEnterPress) this.scanCooldown = true;
 
                 const res = await fetch(`/commerce/api/search/?q=${this.searchQuery}`);
@@ -98,7 +92,9 @@
                 
                 if (this.noResults && isEnterPress) {
                      this.showNotification(`Produkt '${this.searchQuery}' nicht gefunden`, 'error');
-                     setTimeout(() => { this.scanCooldown = false; }, 1500); // Cooldown schneller resetten bei Fehler
+                     setTimeout(() => { this.scanCooldown = false; }, 1500);
+                     this.searchQuery = '';
+                     this.focusInput();
                 }
 
                 if (isEnterPress && this.searchResults.length === 1) {
@@ -128,22 +124,24 @@
                         name: product.name,
                         price: product.cost,
                         ean: product.ean,
-                        qty: 1
+                        qty: 1,
+                        // NEU: Wir speichern die Info auch im Cart Item
+                        track_stock: (product.track_stock !== undefined) ? product.track_stock : true 
                     });
                 }
                 
-                // NEU: Erfolgs-Toast anzeigen
                 this.showNotification(`${product.name} hinzugefügt (+1)`);
-
                 this.searchQuery = '';
                 this.searchResults = [];
                 this.noResults = false;
+                this.$nextTick(() => this.focusInput());
             },
     
             updateQty(index, change) {
                 const item = this.cart[index];
                 item.qty += change;
                 if (item.qty <= 0) this.removeFromCart(index);
+                this.focusInput();
             },
     
             removeFromCart(index) {
@@ -151,6 +149,7 @@
                 if (this.cart.length === 0) {
                     this.supplierId = '';
                 }
+                this.focusInput();
             },
     
             get cartTotal() {
@@ -206,6 +205,8 @@
                 this.showSuccessModal = false;
                 this.createdOrderId = null;
                 this.createdRedirectUrl = '';
+                this.searchQuery = '';
+                this.focusInput();
             }
         }
     }
@@ -232,20 +233,9 @@
 
     /* TOAST STYLES */
     .toast-notification {
-        position: fixed;
-        bottom: 20px;
-        right: 20px;
-        padding: 15px 25px;
-        border-radius: 8px;
-        color: white;
-        font-weight: bold;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-        z-index: 10000;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        animation: slideIn 0.3s ease-out;
-        max-width: 90%;
+        position: fixed; bottom: 20px; right: 20px; padding: 15px 25px; border-radius: 8px;
+        color: white; font-weight: bold; box-shadow: 0 4px 12px rgba(0,0,0,0.2); z-index: 10000;
+        display: flex; align-items: center; gap: 10px; animation: slideIn 0.3s ease-out; max-width: 90%;
     }
     .toast-success { background-color: #28a745; }
     .toast-error { background-color: #dc3545; }
@@ -259,22 +249,11 @@
     {% csrf_token %}
     
     <!-- TOAST NOTIFICATION -->
-    <div x-show="toast.show" 
-         class="toast-notification"
-         :class="{
-            'toast-success': toast.type === 'success',
-            'toast-error': toast.type === 'error',
-            'toast-warning': toast.type === 'warning'
-         }"
+    <div x-show="toast.show" class="toast-notification"
+         :class="{ 'toast-success': toast.type === 'success', 'toast-error': toast.type === 'error', 'toast-warning': toast.type === 'warning' }"
          style="display: none;"
-         x-transition:leave="transition ease-in duration-300"
-         x-transition:leave-start="opacity-100 transform translate-y-0"
-         x-transition:leave-end="opacity-0 transform translate-y-8">
-        <i class="fas" :class="{
-            'fa-check-circle': toast.type === 'success',
-            'fa-exclamation-circle': toast.type === 'error',
-            'fa-exclamation-triangle': toast.type === 'warning'
-        }"></i>
+         x-transition:leave="transition ease-in duration-300" x-transition:leave-start="opacity-100 transform translate-y-0" x-transition:leave-end="opacity-0 transform translate-y-8">
+        <i class="fas" :class="{ 'fa-check-circle': toast.type === 'success', 'fa-exclamation-circle': toast.type === 'error', 'fa-exclamation-triangle': toast.type === 'warning' }"></i>
         <span x-text="toast.message"></span>
     </div>
 
@@ -348,7 +327,7 @@
                 <label class="h5 mb-3 d-block">Produkte hinzufügen (Scan/Suche)</label>
                 <div class="input-group input-group-lg">
                     <input type="text" id="search-input" class="form-control" placeholder="EAN..." x-model="searchQuery"
-                           @keydown.enter.prevent="performSearch(true)" @input.debounce.300ms="performSearch(false)">
+                           @keydown.enter.prevent="performSearch(true)" @input.debounce.300ms="performSearch(false)" autofocus>
                     <div class="input-group-append">
                         <button class="btn btn-primary" @click="performSearch(true)">Suchen</button>
                     </div>
@@ -359,7 +338,13 @@
                             <div class="d-flex justify-content-between">
                                 <div>
                                     <strong x-text="product.name"></strong><br>
-                                    <small class="text-muted">EK: <span x-text="product.cost.toFixed(2)"></span> | <span x-text="product.supplier_name"></span></small>
+                                    <!-- NEU: Lager Anzeige dynamisch -->
+                                    <small class="text-muted">
+                                        EK: <span x-text="product.cost.toFixed(2)"></span> | 
+                                        <span x-text="product.supplier_name"></span> | 
+                                        <span x-show="product.track_stock !== false">Lager: <span x-text="product.stock"></span></span>
+                                        <span x-show="product.track_stock === false" class="badge badge-light">Kein Lager</span>
+                                    </small>
                                 </div>
                                 <div class="font-weight-bold text-primary">+</div>
                             </div>

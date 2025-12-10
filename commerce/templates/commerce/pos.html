@@ -13,9 +13,11 @@
             noResults: false,
             isLoading: false,
             
+            // Modal States
             showCheckoutModal: false,
             showSuccessModal: false,
             
+            // Scanner (Kamera) Logic
             scanner: null,
             showScannerControls: false,
             scanCooldown: false, 
@@ -23,53 +25,24 @@
             createdSaleId: null,
             createdPdfUrl: '',
 
+            // Toast State
             toast: { show: false, message: '', type: 'success' },
 
             paymentMethod: 'CASH', 
-            // Hier den echten Key eintragen!
             sumUpAffiliateKey: 'sup_afk_fhpRcEDdXRZouibkztggzW5qwt3DbL4a', 
 
             init() {
-                // Wiederherstellen VOR Scanner Start
                 this.restoreState();
-                this.startScanner();
+                this.startCameraScanner();
+                // Fokus auf das Feld setzen beim Start
+                this.$nextTick(() => this.focusInput());
             },
 
-            // --- STATE MANAGEMENT ---
-            saveState(method) {
-                try {
-                    localStorage.setItem('pos_cart', JSON.stringify(this.cart));
-                    localStorage.setItem('pos_payment_method', method);
-                    localStorage.setItem('pos_active', 'true');
-                } catch(e) { console.error("Save state failed", e); }
+            // Helper: Fokus immer auf das Eingabefeld setzen (Wichtig für Handscanner!)
+            focusInput() {
+                const input = document.getElementById('search-input');
+                if(input) input.focus();
             },
-
-            clearState() {
-                localStorage.removeItem('pos_cart');
-                localStorage.removeItem('pos_payment_method');
-                localStorage.removeItem('pos_active');
-            },
-
-            restoreState() {
-                if (localStorage.getItem('pos_active') === 'true') {
-                    try {
-                        const savedCart = JSON.parse(localStorage.getItem('pos_cart'));
-                        const savedMethod = localStorage.getItem('pos_payment_method');
-                        
-                        if (savedCart && savedCart.length > 0) {
-                            this.cart = savedCart;
-                            this.paymentMethod = savedMethod || 'CASH';
-                            
-                            // Wenn SumUp gewählt war, Modal direkt wieder öffnen
-                            if (this.paymentMethod === 'SUMUP') {
-                                this.showCheckoutModal = true;
-                                this.showNotification('Warenkorb wiederhergestellt.', 'info');
-                            }
-                        }
-                    } catch (e) { console.error("Restore failed", e); }
-                }
-            },
-            // ------------------------
 
             showNotification(message, type = 'success') {
                 this.toast.message = message;
@@ -78,25 +51,33 @@
                 setTimeout(() => { this.toast.show = false; }, 3000);
             },
 
-            startScanner() {
+            // Kamera Scanner (als Fallback / Hybrid)
+            startCameraScanner() {
                 const formats = [
                     Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8,
                     Html5QrcodeSupportedFormats.QR_CODE, Html5QrcodeSupportedFormats.CODE_128,
                     Html5QrcodeSupportedFormats.UPC_A
                 ];
-                if(this.scanner) return;
+                
+                if(this.scanner) return; // Verhindert Doppel-Start
 
                 this.scanner = new Html5Qrcode("reader");
                 this.scanner.start(
                     { facingMode: "environment" },
-                    { fps: 15, qrbox: { width: 280, height: 180 }, aspectRatio: 1.0, formatsToSupport: formats, experimentalFeatures: { useBarCodeDetectorIfSupported: true } },
+                    { 
+                        fps: 15, 
+                        qrbox: { width: 280, height: 180 }, 
+                        aspectRatio: 1.0, 
+                        formatsToSupport: formats, 
+                        experimentalFeatures: { useBarCodeDetectorIfSupported: true } 
+                    },
                     (decodedText) => {
                         if (this.scanCooldown) return;
                         if (this.searchQuery !== decodedText) {
                             this.scanCooldown = true;
                             this.searchQuery = decodedText;
                             if (navigator.vibrate) navigator.vibrate(200);
-                            this.performSearch(true);
+                            this.performSearch(true); // true = Enter gedrückt (Scan fertig)
                             setTimeout(() => { this.scanCooldown = false; }, 1500);
                         }
                     },
@@ -104,7 +85,9 @@
                 ).then(() => {
                     this.showScannerControls = true;
                     this.setupZoom();
-                }).catch(err => console.log("Scanner Error:", err));
+                }).catch(err => {
+                    console.log("Kamera Scanner nicht gestartet (evtl. kein HTTPS oder keine Kamera). Handscanner funktioniert trotzdem.");
+                });
             },
 
             setupZoom() {
@@ -116,8 +99,10 @@
                 }
             },
             
+            // Such-Logik (Wird auch vom Handscanner via Enter ausgelöst)
             async performSearch(isEnterPress) {
                 if (this.searchQuery.length < 2) return;
+                
                 if (isEnterPress) this.scanCooldown = true;
 
                 const res = await fetch(`/commerce/api/search/?q=${this.searchQuery}`);
@@ -128,7 +113,12 @@
                 if (this.noResults && isEnterPress) {
                      this.showNotification(`Produkt '${this.searchQuery}' nicht gefunden`, 'error');
                      setTimeout(() => { this.scanCooldown = false; }, 1500);
+                     // Feld leeren und Fokus zurück
+                     this.searchQuery = '';
+                     this.focusInput();
                 }
+
+                // Auto-Add bei genau einem Treffer (Standard bei EAN Scan)
                 if (isEnterPress && this.searchResults.length === 1) {
                     this.addToCart(this.searchResults[0]);
                 }
@@ -147,20 +137,26 @@
                         qty: 1
                     });
                 }
+                
                 this.showNotification(`${product.name} hinzugefügt (+1)`);
                 this.searchQuery = '';
                 this.searchResults = [];
                 this.noResults = false;
+                
+                // WICHTIG: Sofort Fokus zurück für den nächsten Scan
+                this.$nextTick(() => this.focusInput());
             },
     
             updateQty(index, change) {
                 const item = this.cart[index];
                 item.qty += change;
                 if (item.qty <= 0) this.removeFromCart(index);
+                this.focusInput(); // Fokus halten
             },
     
             removeFromCart(index) {
                 this.cart.splice(index, 1);
+                this.focusInput(); // Fokus halten
             },
     
             get cartTotal() {
@@ -177,17 +173,44 @@
                 this.showCheckoutModal = true;
             },
 
+            saveState(method) {
+                try {
+                    localStorage.setItem('pos_cart', JSON.stringify(this.cart));
+                    localStorage.setItem('pos_payment_method', method);
+                    localStorage.setItem('pos_active', 'true');
+                } catch(e) {}
+            },
+
+            clearState() {
+                localStorage.removeItem('pos_cart');
+                localStorage.removeItem('pos_payment_method');
+                localStorage.removeItem('pos_active');
+            },
+
+            restoreState() {
+                if (localStorage.getItem('pos_active') === 'true') {
+                    try {
+                        const savedCart = JSON.parse(localStorage.getItem('pos_cart'));
+                        const savedMethod = localStorage.getItem('pos_payment_method');
+                        if (savedCart && savedCart.length > 0) {
+                            this.cart = savedCart;
+                            this.paymentMethod = savedMethod || 'CASH';
+                            if (this.paymentMethod === 'SUMUP') {
+                                this.showCheckoutModal = true;
+                                this.showNotification('Warenkorb wiederhergestellt.', 'info');
+                            }
+                        }
+                    } catch (e) {}
+                }
+            },
+
             startSumUpPayment() {
-                // FIX: Status speichern bevor die App verlassen wird!
                 this.paymentMethod = 'SUMUP';
                 this.saveState('SUMUP');
-
                 const total = this.cartTotal.toFixed(2);
-                const title = 'SupportElle-' + new Date().getTime(); 
+                const title = 'Kauf-' + new Date().getTime(); 
                 const currency = 'CHF';
-                
                 const url = `sumupmerchant://pay/1.0?affiliate-key=${this.sumUpAffiliateKey}&app-id=ch.stockkeeper.app&total=${total}&currency=${currency}&title=${title}&skip-screen-success=true`;
-                
                 window.location.href = url;
             },
 
@@ -197,25 +220,15 @@
                     const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
                     const response = await fetch('/commerce/api/checkout/', {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'X-CSRFToken': csrfToken
-                        },
-                        body: JSON.stringify({ 
-                            items: this.cart,
-                            // FIX: Hier wird die Methode gesendet
-                            payment_method: this.paymentMethod 
-                        })
+                        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+                        body: JSON.stringify({ items: this.cart, payment_method: this.paymentMethod })
                     });
-                    
                     const result = await response.json();
-                    
                     if (result.success) {
-                        this.clearState(); // FIX: State aufräumen
+                        this.clearState();
                         this.cart = [];
                         this.createdSaleId = result.sale_id;
                         this.createdPdfUrl = result.pdf_url;
-                        
                         this.showCheckoutModal = false;
                         this.showSuccessModal = true;
                     } else {
@@ -238,7 +251,8 @@
                 this.createdSaleId = null;
                 this.createdPdfUrl = '';
                 this.searchQuery = '';
-                this.clearState(); 
+                this.clearState();
+                this.focusInput(); // Bereit für nächsten Kunden
             }
         }
     }
@@ -251,31 +265,31 @@
     #reader { width: 100%; border-radius: 8px; overflow: hidden; background: #000; min-height: 250px; }
     #reader video { object-fit: cover; border-radius: 8px; }
     .scanner-controls { background: #f8f9fa; padding: 10px; border-radius: 0 0 8px 8px; border: 1px solid #ddd; border-top: none; margin-bottom: 15px; }
-    .zoom-slider { width: 100%; }
-
-    /* Modal & UI Styles */
+    
+    /* Layout */
     .pos-container { max-width: 1200px; margin: 0 auto; padding: 20px; }
     .search-box { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }
+    
+    /* Product List Dropdown */
     .product-list { list-style: none; padding: 0; margin: 0; max-height: 200px; overflow-y: auto; border: 1px solid #eee; display: none; }
     .product-list.active { display: block; }
     .product-list li { padding: 10px; border-bottom: 1px solid #eee; cursor: pointer; }
     .product-list li:hover { background-color: #f0f4f8; }
+    
+    /* Cart Table */
     .cart-table th { background-color: #343a40; color: #fff; }
     
+    /* Modals */
     .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 9999; }
     .modal-box { background: white; border-radius: 8px; width: 90%; max-width: 500px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); overflow: hidden; animation: fadeIn 0.2s ease-out; }
-    
-    /* TOAST STYLES */
-    .toast-notification {
-        position: fixed; bottom: 20px; right: 20px; padding: 15px 25px; border-radius: 8px;
-        color: white; font-weight: bold; box-shadow: 0 4px 12px rgba(0,0,0,0.2); z-index: 10000;
-        display: flex; align-items: center; gap: 10px; animation: slideIn 0.3s ease-out; max-width: 90%;
-    }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
+
+    /* Toasts */
+    .toast-notification { position: fixed; bottom: 20px; right: 20px; padding: 15px 25px; border-radius: 8px; color: white; font-weight: bold; box-shadow: 0 4px 12px rgba(0,0,0,0.2); z-index: 10000; display: flex; align-items: center; gap: 10px; animation: slideIn 0.3s ease-out; max-width: 90%; }
     .toast-success { background-color: #28a745; }
     .toast-error { background-color: #dc3545; }
     .toast-warning { background-color: #ffc107; color: #333; }
     @keyframes slideIn { from { transform: translateY(100px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-    @keyframes fadeIn { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
 </style>
 {% endblock %}
 
@@ -292,7 +306,7 @@
         <span x-text="toast.message"></span>
     </div>
 
-    <!-- CHECKOUT MODAL (SumUp Update) -->
+    <!-- CHECKOUT MODAL -->
     <div class="modal-overlay" x-show="showCheckoutModal" style="display: none;">
         <div class="modal-box" @click.away="showCheckoutModal = false">
             <div class="modal-header bg-success text-white">
@@ -302,31 +316,19 @@
             <div class="modal-body text-center p-4">
                 <p class="lead">Summe zu zahlen:</p>
                 <h1 class="display-4 font-weight-bold text-success" x-text="cartTotalDisplay"></h1>
-                
                 <hr>
-                
                 <div class="d-flex justify-content-center gap-3 mt-4 flex-wrap">
-                    <!-- Button 1: SumUp -->
                     <button class="btn btn-outline-primary btn-lg flex-fill" @click="startSumUpPayment()">
-                        <i class="fas fa-credit-card fa-2x d-block mb-2"></i>
-                        SumUp / Karte
+                        <i class="fas fa-credit-card fa-2x d-block mb-2"></i> SumUp / Karte
                     </button>
-                    
-                    <!-- Button 2: Bar -->
                     <button class="btn btn-outline-success btn-lg flex-fill" @click="paymentMethod='CASH'; confirmCheckout()">
-                        <i class="fas fa-money-bill-wave fa-2x d-block mb-2"></i>
-                        Barzahlung
+                        <i class="fas fa-money-bill-wave fa-2x d-block mb-2"></i> Barzahlung
                     </button>
                 </div>
-                
-                <!-- Falls SumUp gewählt wurde, zeigen wir den Abschluss-Button -->
                 <div x-show="paymentMethod === 'SUMUP'" class="mt-3 alert alert-info text-left">
                     <small>1. SumUp App öffnet sich...<br>2. Zahlung durchführen.<br>3. Zurückkehren & bestätigen:</small>
-                    <button class="btn btn-success btn-block mt-2" @click="confirmCheckout()">
-                        Zahlung bestätigt & Buchen
-                    </button>
+                    <button class="btn btn-success btn-block mt-2" @click="confirmCheckout()">Zahlung bestätigt & Buchen</button>
                 </div>
-
             </div>
         </div>
     </div>
@@ -351,10 +353,9 @@
 
     <!-- MAIN UI -->
     <div class="row">
-        <!-- LINKS: Scanner & Suche -->
+        <!-- LINKS -->
         <div class="col-md-7">
-            
-            <!-- SCANNER -->
+            <!-- Kamerabild -->
             <div class="card mb-3 border-0 shadow-sm">
                 <div class="card-body p-0">
                     <div id="reader"></div>
@@ -364,16 +365,20 @@
                             <input type="range" id="zoom-slider" class="zoom-slider custom-range" min="1" max="5" step="0.1" value="1">
                             <i class="fas fa-search-plus ml-2 text-muted"></i>
                         </div>
-                        <div class="text-center mt-1"><small class="text-muted">Zoom einstellen für Fokus</small></div>
                     </div>
                 </div>
             </div>
 
+            <!-- Suchfeld (Fokus wichtig für Handscanner!) -->
             <div class="search-box">
-                <label for="search" class="h4 mb-3 d-block"><i class="fas fa-keyboard"></i> Manuelle Eingabe</label>
+                <label for="search" class="h4 mb-3 d-block"><i class="fas fa-barcode"></i> Produkt Scannen (Handheld / Kamera)</label>
                 <div class="input-group input-group-lg">
-                    <input type="text" id="search-input" class="form-control" placeholder="EAN oder Name..." 
-                           x-model="searchQuery" @keydown.enter.prevent="performSearch(true)" @input.debounce.300ms="performSearch(false)">
+                    <!-- autofocus und x-ref für Fokus-Management -->
+                    <input type="text" id="search-input" class="form-control" placeholder="EAN scannen oder tippen..." 
+                           x-model="searchQuery" 
+                           @keydown.enter.prevent="performSearch(true)" 
+                           @input.debounce.300ms="performSearch(false)"
+                           autofocus>
                     <div class="input-group-append">
                         <button class="btn btn-primary" @click="performSearch(true)">Suchen</button>
                     </div>
@@ -433,7 +438,7 @@
                                 </template>
                                 <tr x-show="cart.length === 0">
                                     <td colspan="4" class="text-center py-4 text-muted">
-                                        Warenkorb leer. Scannen Sie Produkte.
+                                        Warenkorb leer. Bitte Produkte scannen.
                                     </td>
                                 </tr>
                             </tbody>

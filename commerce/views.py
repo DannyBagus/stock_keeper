@@ -54,6 +54,7 @@ def api_search_product(request):
             'price': float(p.sales_price), 
             'cost': float(p.cost_price),   
             'stock': p.stock_quantity,
+            'track_stock': p.track_stock,
             'vat_rate': float(p.vat.rate) if p.vat else 0.0,
             'supplier_id': p.supplier.id if p.supplier else None,
             'supplier_name': p.supplier.name if p.supplier else "Unbekannt"

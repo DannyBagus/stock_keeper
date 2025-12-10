@@ -62,6 +62,13 @@ class Product(models.Model):
     size = models.CharField(max_length=50, blank=True)
     color = models.CharField(max_length=50, blank=True)
     
+    # Schalter für Lagerführung
+    track_stock = models.BooleanField(
+        default=True, 
+        verbose_name="Lagerbestand führen",
+        help_text="Deaktivieren für Dienstleistungen oder Gastronomie-Produkte (z.B. Kaffee)."
+    )
+    
     # Bestand & Preis
     # WICHTIG: Dieser Wert ist nun ein "Cache". Die Wahrheit liegt in den StockMovements.
     stock_quantity = models.IntegerField(default=0)
@@ -124,6 +131,10 @@ class Product(models.Model):
             reference (Model, optional): Das Objekt, das die Änderung ausgelöst hat (Sale, PO)
             notes (str, optional): Freitext Notiz
         """
+        # Wenn Lagerführung deaktiviert ist, brechen wir hier ab (oder loggen nur)
+        if not self.track_stock:
+            return None
+        
         # 1. Bestand aktualisieren
         self.stock_quantity += quantity
         self.save()
