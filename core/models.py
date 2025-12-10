@@ -6,7 +6,7 @@ from django.conf import settings
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 from django.db import transaction
-import random # NEU: Für EAN Generierung
+import random
 
 class Category(models.Model):
     name = models.CharField(max_length=100)
@@ -56,7 +56,7 @@ class Product(models.Model):
     supplier = models.ForeignKey(Supplier, on_delete=models.SET_NULL, null=True, related_name='products')
     
     # Identifikation
-    ean = models.CharField(max_length=13, unique=True, blank=True, help_text="Wird automatisch generiert, falls leer (Barcode / EAN)") # blank=True erlaubt
+    ean = models.CharField(max_length=13, unique=True, blank=True, help_text="Wird automatisch generiert, falls leer (Barcode / EAN)")
     sku = models.CharField(max_length=50, unique=True, blank=True, help_text="Wird automatisch generiert (z.B. 10001)")
     
     # Eigenschaften
@@ -83,16 +83,27 @@ class Product(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"{self.name} ({self.sku or self.ean})"
+        # 1. Start mit dem Produktnamen
+        display = self.name
+        
+        # 2. Eigenschaften (Größe, Farbe) sammeln
+        details = []
+        if self.size:
+            details.append(self.size)
+        if self.color:
+            details.append(self.color)
+        
+        # 3. Wenn Eigenschaften vorhanden sind, formatieren: "Name (Größe, Farbe)"
+        if details:
+            display += f" ({', '.join(details)})"
+            
+        return display
 
     def calculate_ean_checksum(self, ean_string):
         """
         Berechnet die Prüfziffer für einen 12-stelligen EAN-String.
-        Algorithmus: Modulo 10 Gewichtung (1-3-1-3...).
         """
         checksum = 0
-        # Von links nach rechts: Ungerade Positionen * 1, Gerade * 3
-        # Da Strings 0-indiziert sind: Index 0 (Pos 1) -> *1, Index 1 (Pos 2) -> *3
         for i, digit in enumerate(ean_string):
             if i % 2 == 0:
                 checksum += int(digit) * 1
@@ -108,12 +119,10 @@ class Product(models.Model):
     def generate_unique_ean(self):
         """Generiert eine interne EAN (Prefix 29)"""
         while True:
-            # 29 (Interne Nutzung) + 10 zufällige Ziffern
             base = "29" + "".join([str(random.randint(0, 9)) for _ in range(10)])
             checksum = self.calculate_ean_checksum(base)
             full_ean = f"{base}{checksum}"
             
-            # Sicherstellen, dass diese EAN noch nicht existiert
             if not Product.objects.filter(ean=full_ean).exists():
                 return full_ean
 

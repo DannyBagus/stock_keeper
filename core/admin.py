@@ -47,9 +47,8 @@ class StockMovementInline(admin.TabularInline):
 
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
-    # NEU: track_stock auch in der Liste anzeigen für schnellen Überblick
-    list_display = ('name', 'sku', 'stock_quantity', 'track_stock', 'unit', 'sales_price', 'category', 'supplier')
-    # NEU: Filter hinzufügen
+    # KORREKTUR: Wir nutzen 'display_name' statt 'name'
+    list_display = ('display_name', 'sku', 'stock_quantity', 'track_stock', 'unit', 'sales_price', 'category', 'supplier')
     list_filter = ('category', 'supplier', 'unit', 'is_active', 'track_stock')
     search_fields = ('name', 'sku', 'ean', 'description')
     
@@ -59,7 +58,6 @@ class ProductAdmin(admin.ModelAdmin):
     
     fieldsets = (
         ('Basisdaten', {
-            # NEU: track_stock hier eingefügt, damit es bearbeitbar ist
             'fields': ('name', 'description', 'category', 'supplier', 'is_active', 'track_stock')
         }),
         ('Identifikation', {
@@ -73,6 +71,11 @@ class ProductAdmin(admin.ModelAdmin):
         }),
     )
 
+    # Diese Methode erzwingt die Nutzung Ihrer __str__ Formatierung
+    @admin.display(description='Produktbezeichnung', ordering='name')
+    def display_name(self, obj):
+        return str(obj)
+
     def save_model(self, request, obj, form, change):
         """
         Erkennt manuelle Bestandsänderungen im Admin und schreibt einen Audit-Log Eintrag.
@@ -80,7 +83,6 @@ class ProductAdmin(admin.ModelAdmin):
         if change:
             try:
                 old_obj = Product.objects.get(pk=obj.pk)
-                # Nur loggen, wenn Tracking aktiv ist UND sich was geändert hat
                 if obj.track_stock: 
                     diff = obj.stock_quantity - old_obj.stock_quantity
                     
