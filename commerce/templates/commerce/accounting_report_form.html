@@ -1,0 +1,49 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block content %}
+<div class="col-12 col-md-8 offset-md-2">
+    <div class="card card-primary card-outline">
+        <div class="card-header">
+            <h3 class="card-title"><i class="fas fa-chart-line mr-2"></i> Umsatzliste generieren</h3>
+        </div>
+        <div class="card-body">
+            <p class="text-muted">
+                Erstellen Sie einen detaillierten Umsatz-Report für die Buchhaltung. 
+                Die Auswertung gruppiert Umsätze nach Produktkategorien (z.B. für separate Erlöskonten Cafe/Laden).
+            </p>
+            
+            <form method="POST" target="_blank">
+                {% csrf_token %}
+                
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="form-group">
+                            <label for="{{ form.start_date.id_for_label }}">{{ form.start_date.label }}</label>
+                            {{ form.start_date }}
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="form-group">
+                            <label for="{{ form.end_date.id_for_label }}">{{ form.end_date.label }}</label>
+                            {{ form.end_date }}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group mt-3">
+                    <label for="{{ form.categories.id_for_label }}">{{ form.categories.label }}</label>
+                    {{ form.categories }}
+                    <small class="form-text text-muted">Halten Sie Strg (Windows) oder Cmd (Mac) gedrückt, um mehrere Kategorien zu wählen.</small>
+                </div>
+
+                <div class="mt-4">
+                    <button type="submit" class="btn btn-primary btn-lg btn-block">
+                        <i class="fas fa-file-pdf mr-2"></i> PDF Report erstellen
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

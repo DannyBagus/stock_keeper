@@ -1,7 +1,9 @@
+from django.utils import timezone
 from django import forms
 from django.forms.models import BaseInlineFormSet, ModelForm
 from decimal import Decimal
 from django.core.exceptions import ObjectDoesNotExist
+from core.models import Category
 from .models import PurchaseOrder # Import hinzufügen
 from core.widgets import DragAndDropFileWidget 
 
@@ -34,7 +36,7 @@ class SaleItemFormSet(BaseInlineFormSet):
             if instance.unit_price_gross is None:
                 instance.unit_price_gross = product.sales_price
                 
-# NEU: Das Formular für PurchaseOrder
+# Formular für PurchaseOrder
 class PurchaseOrderForm(ModelForm):
     class Meta:
         model = PurchaseOrder
@@ -42,3 +44,22 @@ class PurchaseOrderForm(ModelForm):
         widgets = {
             'invoice_document': DragAndDropFileWidget(),
         }
+        
+# Formular für Umsatzliste
+class AccountingReportForm(forms.Form):
+    start_date = forms.DateField(
+        label="Periode von",
+        widget=forms.DateInput(attrs={'type': 'date', 'class': 'form-control'}),
+        initial=timezone.now().date().replace(day=1) # Erster des Monats
+    )
+    end_date = forms.DateField(
+        label="Periode bis",
+        widget=forms.DateInput(attrs={'type': 'date', 'class': 'form-control'}),
+        initial=timezone.now().date()
+    )
+    categories = forms.ModelMultipleChoiceField(
+        label="Kategorien (Leer lassen für Alle)",
+        queryset=Category.objects.all(),
+        widget=forms.SelectMultiple(attrs={'class': 'form-control', 'style': 'height: 150px;'}),
+        required=False
+    )

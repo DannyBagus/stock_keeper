@@ -172,6 +172,9 @@ JAZZMIN_SETTINGS = {
             # 2. VERWALTUNG
             {"name": "Verkäufe (Sales)", "url": "admin:commerce_sale_changelist", "icon": "fas fa-shopping-basket", "permissions": ["commerce.view_sale"]},
             {"name": "Bestellarchiv", "url": "admin:commerce_purchaseorder_changelist", "icon": "fas fa-file-invoice", "permissions": ["commerce.view_purchaseorder"]},
+            
+            # 3. REPORTING (NEU)
+            {"name": "Umsatzliste (PDF)", "url": "accounting_report", "icon": "fas fa-chart-line text-info", "permissions": ["auth.view_user"]},
         ],
         
         "core": [

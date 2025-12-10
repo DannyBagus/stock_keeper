@@ -17,6 +17,8 @@ import json
 from .models import Product, Sale, SaleItem, PurchaseOrder, PurchaseOrderItem
 from core.models import Supplier
 from .utils import render_to_pdf
+from .forms import AccountingReportForm
+from django.utils import timezone
 
 @staff_member_required
 def pos_view(request):
@@ -239,3 +241,101 @@ def shopify_webhook(request):
     except Exception as e:
         print(f"Error processing webhook: {e}")
         return HttpResponse("Internal Server Error", status=500)
+    
+    
+# accounting report
+@staff_member_required
+def accounting_report_view(request):
+    """
+    Zeigt das Formular für den Umsatz-Report und generiert das PDF bei POST.
+    """
+    if request.method == 'POST':
+        form = AccountingReportForm(request.POST)
+        if form.is_valid():
+            start_date = form.cleaned_data['start_date']
+            end_date = form.cleaned_data['end_date']
+            categories = form.cleaned_data['categories']
+
+            # 1. Daten holen
+            # Wir brauchen SaleItems, um die Summen pro Kategorie zu bilden
+            items_qs = SaleItem.objects.filter(
+                sale__date__date__gte=start_date,
+                sale__date__date__lte=end_date
+            ).select_related('product', 'product__category', 'sale')
+
+            if categories:
+                items_qs = items_qs.filter(product__category__in=categories)
+
+            # 2. Aggregation pro Kategorie
+            category_stats = {}
+            # Struktur: { 'KategorieName': {'gross': 0, 'net': 0, 'vat': 0} }
+
+            total_period_gross = Decimal('0.00')
+
+            for item in items_qs:
+                cat_name = item.product.category.name if item.product.category else "Ohne Kategorie"
+                
+                if cat_name not in category_stats:
+                    category_stats[cat_name] = {
+                        'gross': Decimal('0.00'), 
+                        'net': Decimal('0.00'), 
+                        'vat': Decimal('0.00')
+                    }
+
+                # Berechnung für dieses Item
+                # item.total_price_gross ist eine Property, wir rechnen hier manuell zur Sicherheit
+                qty = item.quantity
+                gross = item.unit_price_gross * qty if item.unit_price_gross else Decimal('0.00')
+                
+                # Netto/MwSt rückrechnen
+                vat_rate = item.vat_rate or Decimal('0.00')
+                divisor = Decimal('1.00') + (vat_rate / Decimal('100.00'))
+                net = gross / divisor
+                vat_amt = gross - net
+
+                # Zu Kategorie addieren
+                category_stats[cat_name]['gross'] += gross
+                category_stats[cat_name]['net'] += net
+                category_stats[cat_name]['vat'] += vat_amt
+                
+                total_period_gross += gross
+
+            # 3. Detail-Liste der Verkäufe (Sales)
+            # Wir holen die Sales separat, um Duplikate zu vermeiden, falls ein Sale mehrere Items hat
+            sales_qs = Sale.objects.filter(
+                date__date__gte=start_date,
+                date__date__lte=end_date
+            ).order_by('date')
+            
+            # Wenn nach Kategorie gefiltert wurde, nur Sales anzeigen, die solche Items enthalten
+            if categories:
+                sales_qs = sales_qs.filter(items__product__category__in=categories).distinct()
+
+            # 4. PDF Generieren
+            context = {
+                'start_date': start_date,
+                'end_date': end_date,
+                'category_stats': category_stats,
+                'sales_list': sales_qs,
+                'total_period_gross': total_period_gross,
+                'generation_date': timezone.now()
+            }
+            
+            response = render_to_pdf('commerce/accounting_report_pdf.html', context)
+            if isinstance(response, HttpResponse) and response.status_code == 200:
+                filename = f"Umsatzliste_{start_date}_{end_date}.pdf"
+                response['Content-Disposition'] = f'inline; filename="{filename}"'
+                return response
+            else:
+                return HttpResponse("Fehler beim Generieren des PDFs", status=500)
+
+    else:
+        form = AccountingReportForm()
+
+    # Admin Kontext laden für Navigation
+    context = admin.site.each_context(request)
+    context.update({
+        'form': form,
+        'title': 'Umsatzliste & Buchhaltungs-Report'
+    })
+    return render(request, 'commerce/accounting_report_form.html', context)
