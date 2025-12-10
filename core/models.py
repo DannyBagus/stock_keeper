@@ -6,6 +6,7 @@ from django.conf import settings
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 from django.db import transaction
+import random # NEU: Für EAN Generierung
 
 class Category(models.Model):
     name = models.CharField(max_length=100)
@@ -55,23 +56,16 @@ class Product(models.Model):
     supplier = models.ForeignKey(Supplier, on_delete=models.SET_NULL, null=True, related_name='products')
     
     # Identifikation
-    ean = models.CharField(max_length=13, unique=True, help_text="Barcode / EAN")
+    ean = models.CharField(max_length=13, unique=True, blank=True, help_text="Wird automatisch generiert, falls leer (Barcode / EAN)") # blank=True erlaubt
     sku = models.CharField(max_length=50, unique=True, blank=True, help_text="Wird automatisch generiert (z.B. 10001)")
     
     # Eigenschaften
     size = models.CharField(max_length=50, blank=True)
     color = models.CharField(max_length=50, blank=True)
     
-    # Schalter für Lagerführung
-    track_stock = models.BooleanField(
-        default=True, 
-        verbose_name="Lagerbestand führen",
-        help_text="Deaktivieren für Dienstleistungen oder Gastronomie-Produkte (z.B. Kaffee)."
-    )
-    
     # Bestand & Preis
-    # WICHTIG: Dieser Wert ist nun ein "Cache". Die Wahrheit liegt in den StockMovements.
     stock_quantity = models.IntegerField(default=0)
+    track_stock = models.BooleanField(default=True, verbose_name="Lagerbestand führen", help_text="Deaktivieren für Dienstleistungen")
     unit = models.CharField(max_length=3, choices=Unit.choices, default=Unit.PIECE)
     
     # Preise
@@ -82,7 +76,7 @@ class Product(models.Model):
     # Bild
     image = models.ImageField(upload_to='products/', blank=True, null=True)
     
-    # Archivierung statt Löschen (für Datenintegrität)
+    # Archivierung
     is_active = models.BooleanField(default=True, verbose_name="Aktiv")
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -91,8 +85,44 @@ class Product(models.Model):
     def __str__(self):
         return f"{self.name} ({self.sku or self.ean})"
 
+    def calculate_ean_checksum(self, ean_string):
+        """
+        Berechnet die Prüfziffer für einen 12-stelligen EAN-String.
+        Algorithmus: Modulo 10 Gewichtung (1-3-1-3...).
+        """
+        checksum = 0
+        # Von links nach rechts: Ungerade Positionen * 1, Gerade * 3
+        # Da Strings 0-indiziert sind: Index 0 (Pos 1) -> *1, Index 1 (Pos 2) -> *3
+        for i, digit in enumerate(ean_string):
+            if i % 2 == 0:
+                checksum += int(digit) * 1
+            else:
+                checksum += int(digit) * 3
+        
+        remainder = checksum % 10
+        if remainder == 0:
+            return 0
+        else:
+            return 10 - remainder
+
+    def generate_unique_ean(self):
+        """Generiert eine interne EAN (Prefix 29)"""
+        while True:
+            # 29 (Interne Nutzung) + 10 zufällige Ziffern
+            base = "29" + "".join([str(random.randint(0, 9)) for _ in range(10)])
+            checksum = self.calculate_ean_checksum(base)
+            full_ean = f"{base}{checksum}"
+            
+            # Sicherstellen, dass diese EAN noch nicht existiert
+            if not Product.objects.filter(ean=full_ean).exists():
+                return full_ean
+
     def save(self, *args, **kwargs):
-        # SKU Generierungs-Logik
+        # 1. Automatische EAN Generierung
+        if not self.ean:
+            self.ean = self.generate_unique_ean()
+
+        # 2. Automatische SKU Generierung
         if not self.sku and self.category:
             if not self.category.sku_prefix:
                 self.category.save()
@@ -120,36 +150,23 @@ class Product(models.Model):
 
     @transaction.atomic
     def adjust_stock(self, quantity, movement_type, user=None, reference=None, notes=""):
-        """
-        Zentrale Methode um den Bestand zu ändern.
-        Erstellt automatisch einen Eintrag im Audit Log (StockMovement).
-        
-        Args:
-            quantity (int): Veränderung (+ für Eingang, - für Ausgang)
-            movement_type (str): Art der Bewegung (siehe StockMovement.Type)
-            user (User, optional): Wer hat es ausgelöst?
-            reference (Model, optional): Das Objekt, das die Änderung ausgelöst hat (Sale, PO)
-            notes (str, optional): Freitext Notiz
-        """
-        # Wenn Lagerführung deaktiviert ist, brechen wir hier ab (oder loggen nur)
         if not self.track_stock:
             return None
-        
-        # 1. Bestand aktualisieren
+
+        # Bestand aktualisieren
         self.stock_quantity += quantity
         self.save()
         
-        # 2. Audit Eintrag erstellen
+        # Audit Eintrag
         movement = StockMovement(
             product=self,
             quantity=quantity,
-            stock_after=self.stock_quantity, # Snapshot des neuen Bestands
+            stock_after=self.stock_quantity,
             movement_type=movement_type,
             user=user,
             notes=notes
         )
         
-        # Wenn eine Referenz (z.B. Sale oder PurchaseOrder) übergeben wurde, verknüpfen wir sie generisch
         if reference:
             movement.content_object = reference
             
@@ -167,21 +184,14 @@ class StockMovement(models.Model):
         DAMAGED = 'DAMAGED', _('Bruch/Verlust')
 
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='movements')
-    
-    # Die Veränderung (+10 oder -5)
-    quantity = models.IntegerField(help_text="Veränderung des Bestands (positiv oder negativ)")
-    
-    # Der Bestand NACH dieser Bewegung (für schnelle Historien-Ansicht ohne Rechnen)
+    quantity = models.IntegerField(help_text="Veränderung des Bestands")
     stock_after = models.IntegerField(help_text="Bestand nach der Bewegung")
-    
     movement_type = models.CharField(max_length=20, choices=Type.choices)
     
-    # Audit Trail
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     notes = models.CharField(max_length=255, blank=True)
 
-    # Generic Relation: Kann auf Sale, PurchaseOrder oder jedes andere Modell zeigen
     content_type = models.ForeignKey(ContentType, on_delete=models.SET_NULL, null=True, blank=True)
     object_id = models.PositiveIntegerField(null=True, blank=True)
     content_object = GenericForeignKey('content_type', 'object_id')
@@ -192,4 +202,4 @@ class StockMovement(models.Model):
         verbose_name_plural = "Lagerbewegungen"
 
     def __str__(self):
-        return f"{self.created_at.date()} | {self.product.name} | {self.quantity} ({self.get_movement_type_display()})"
+        return f"{self.created_at.date()} | {self.product.name} | {self.quantity}"
