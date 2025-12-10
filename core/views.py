@@ -1,5 +1,5 @@
 from django.shortcuts import render, redirect
-from django.contrib import admin
+from django.contrib import admin 
 from django.contrib.admin.views.decorators import staff_member_required
 from django.contrib import messages
 from django.db.models import Sum, Count
@@ -7,9 +7,6 @@ from django.db.models.functions import TruncMonth
 from django.utils import timezone
 import json
 from .models import Product, Category
-# Importiere Modelle aus der commerce App
-# Wir nutzen apps.get_model um zirkuläre Imports zu vermeiden, falls nötig, 
-# aber hier sollte der direkte Import funktionieren.
 from commerce.models import Sale, PurchaseOrder
 
 @staff_member_required
@@ -28,7 +25,6 @@ def scanner_view(request):
                 messages.warning(request, f"Produkt mit EAN {ean} nicht gefunden. Neues Produkt anlegen?")
                 return redirect(f'/admin/core/product/add/?ean={ean}')
     
-    # FIX: Admin-Kontext laden (Damit Sidebar/Menu sichtbar ist)
     context = admin.site.each_context(request)
     return render(request, 'core/scanner.html', context)
 
@@ -62,13 +58,16 @@ def dashboard_view(request):
     ).order_by('date')[:5]
 
     # 4. KPIs
+    # Total aller Produkte (auch inaktive oder ohne Tracking, als Info)
     total_products = Product.objects.count()
-    low_stock = Product.objects.filter(stock_quantity__lt=5).count()
     
-    # FIX: Erst den Admin-Kontext holen
+    # FIX: Nur Produkte zählen, die auch gelagert werden (track_stock=True)
+    low_stock = Product.objects.filter(
+        stock_quantity__lt=5, 
+        track_stock=True
+    ).count()
+    
     context = admin.site.each_context(request)
-    
-    # Dann unsere eigenen Daten hinzufügen
     context.update({
         'months_json': json.dumps(months),
         'revenues_json': json.dumps(revenues),
@@ -77,7 +76,6 @@ def dashboard_view(request):
         'pending_orders': pending_orders,
         'total_products': total_products,
         'low_stock': low_stock,
-        # Titel für den Browser-Tab (optional, überschreibt Jazzmin Default)
         'title': 'Dashboard' 
     })
     
