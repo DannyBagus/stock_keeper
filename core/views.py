@@ -2,11 +2,14 @@ from django.shortcuts import render, redirect
 from django.contrib import admin 
 from django.contrib.admin.views.decorators import staff_member_required
 from django.contrib import messages
+from django.db import transaction
 from django.db.models import Sum, Count
 from django.db.models.functions import TruncMonth
 from django.utils import timezone
+from django.views.decorators.http import require_POST
+from django.http import JsonResponse
 import json
-from .models import Product, Category
+from .models import Product, Category, StockMovement
 from commerce.models import Sale, PurchaseOrder
 
 @staff_member_required
@@ -80,3 +83,60 @@ def dashboard_view(request):
     })
     
     return render(request, 'core/dashboard.html', context)
+
+
+@staff_member_required
+def inventory_view(request):
+    """
+    Zeigt das Inventur-Interface (Stock Take).
+    """
+    context = admin.site.each_context(request)
+    context.update({'title': 'Inventur / Lagerkorrektur'})
+    return render(request, 'core/inventory.html', context)
+
+
+@staff_member_required
+@require_POST
+@transaction.atomic
+def api_inventory_correct(request):
+    """
+    Führt die Bestandskorrektur durch.
+    """
+    try:
+        data = json.loads(request.body)
+        product_id = data.get('product_id')
+        counted_qty = data.get('counted_qty')
+        
+        if product_id is None or counted_qty is None:
+            return JsonResponse({'error': 'Fehlende Daten'}, status=400)
+
+        product = Product.objects.get(pk=product_id)
+        
+        if not product.track_stock:
+            return JsonResponse({'error': 'Für dieses Produkt wird kein Lager geführt.'}, status=400)
+
+        # Differenz berechnen
+        current_qty = product.stock_quantity
+        # counted (8) - current (10) = -2
+        diff = int(counted_qty) - current_qty
+        
+        if diff != 0:
+            product.adjust_stock(
+                quantity=diff,
+                movement_type=StockMovement.Type.CORRECTION,
+                user=request.user,
+                notes="Inventur / Stock Take"
+            )
+            
+        return JsonResponse({
+            'success': True,
+            'product_name': product.name,
+            'old_stock': current_qty,
+            'new_stock': product.stock_quantity,
+            'diff': diff
+        })
+
+    except Product.DoesNotExist:
+        return JsonResponse({'error': 'Produkt nicht gefunden'}, status=404)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)

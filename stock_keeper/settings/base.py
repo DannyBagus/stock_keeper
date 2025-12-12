@@ -182,6 +182,7 @@ JAZZMIN_SETTINGS = {
         "core": [
             # 1. OPERATIV
             {"name": "Lagerverwaltung", "url": "/core/scanner/", "icon": "fas fa-qrcode text-warning", "permissions": ["auth.view_user"]},
+            {"name": "Inventur / Zählung", "url": "/core/inventory/", "icon": "fas fa-clipboard-check text-warning", "permissions": ["auth.view_user"]},
             
             # 2. STAMMDATEN
             {"name": "Produkte", "url": "admin:core_product_changelist", "icon": "fas fa-box-open", "permissions": ["core.view_product"]},

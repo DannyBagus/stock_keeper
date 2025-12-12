@@ -1,0 +1,357 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block extrahead %}
+<script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+<script src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.3/dist/cdn.min.js"></script>
+
+<script>
+    function inventoryApp() {
+        return {
+            searchQuery: '',
+            // Aktuelles Produkt im Fokus
+            activeProduct: null, 
+            // Eingabewert
+            countedQty: '',
+            
+            // UI States
+            searchResults: [],
+            noResults: false,
+            isLoading: false,
+            history: [], // Letzte Aktionen lokal anzeigen
+            
+            // Scanner
+            scanner: null,
+            showScannerControls: false,
+            scanCooldown: false,
+
+            // Toast
+            toast: { show: false, message: '', type: 'success' },
+
+            init() {
+                this.startScanner();
+                this.$nextTick(() => this.focusSearch());
+            },
+
+            focusSearch() {
+                document.getElementById('search-input').focus();
+            },
+            
+            focusCount() {
+                setTimeout(() => {
+                    const el = document.getElementById('count-input');
+                    if(el) { el.focus(); el.select(); }
+                }, 100);
+            },
+
+            showNotification(message, type = 'success') {
+                this.toast.message = message;
+                this.toast.type = type;
+                this.toast.show = true;
+                setTimeout(() => { this.toast.show = false; }, 3000);
+            },
+
+            // --- SCANNER LOGIC ---
+            startScanner() {
+                const formats = [
+                    Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8,
+                    Html5QrcodeSupportedFormats.QR_CODE, Html5QrcodeSupportedFormats.CODE_128,
+                    Html5QrcodeSupportedFormats.UPC_A
+                ];
+                if(this.scanner) return;
+
+                this.scanner = new Html5Qrcode("reader");
+                this.scanner.start(
+                    { facingMode: "environment" },
+                    { fps: 15, qrbox: { width: 280, height: 180 }, aspectRatio: 1.0, formatsToSupport: formats, experimentalFeatures: { useBarCodeDetectorIfSupported: true } },
+                    (decodedText) => {
+                        if (this.scanCooldown) return;
+                        if (this.searchQuery !== decodedText) {
+                            this.scanCooldown = true;
+                            this.searchQuery = decodedText;
+                            if (navigator.vibrate) navigator.vibrate(200);
+                            this.performSearch(true);
+                            setTimeout(() => { this.scanCooldown = false; }, 1500);
+                        }
+                    },
+                    (err) => {}
+                ).then(() => {
+                    this.showScannerControls = true;
+                    this.setupZoom();
+                }).catch(err => console.log("Kamera nicht verfügbar"));
+            },
+
+            setupZoom() {
+                const slider = document.getElementById('zoom-slider');
+                if(slider) {
+                    slider.addEventListener('input', (e) => {
+                        try { this.scanner.applyVideoConstraints({ advanced: [{ zoom: parseFloat(e.target.value) }] }); } catch(e){}
+                    });
+                }
+            },
+            // ---------------------
+
+            async performSearch(isEnterPress) {
+                if (this.searchQuery.length < 2) return;
+                
+                // Wir nutzen die existierende Commerce API für die Suche
+                const res = await fetch(`/commerce/api/search/?q=${this.searchQuery}`);
+                const data = await res.json();
+                
+                this.searchResults = data.results;
+                this.noResults = this.searchResults.length === 0;
+
+                if (this.noResults && isEnterPress) {
+                     this.showNotification(`Produkt '${this.searchQuery}' nicht gefunden`, 'error');
+                     this.searchQuery = '';
+                     this.focusSearch();
+                }
+
+                // Auto-Select bei exaktem Treffer
+                if (isEnterPress && this.searchResults.length === 1) {
+                    this.selectProduct(this.searchResults[0]);
+                }
+            },
+
+            selectProduct(product) {
+                if (!product.track_stock) {
+                    this.showNotification("Lagerführung für dieses Produkt deaktiviert.", "warning");
+                    this.searchQuery = '';
+                    this.searchResults = [];
+                    return;
+                }
+                
+                this.activeProduct = product;
+                // Standardmäßig füllen wir das Feld mit dem aktuellen Bestand, 
+                // damit man bei kleinen Abweichungen nur +/- machen muss, oder überschreiben kann.
+                this.countedQty = product.stock; 
+                
+                this.searchQuery = '';
+                this.searchResults = [];
+                
+                // Fokus auf das Zähl-Feld
+                this.focusCount();
+            },
+
+            async submitCorrection() {
+                if (!this.activeProduct) return;
+                
+                const counted = parseInt(this.countedQty);
+                if (isNaN(counted)) {
+                    this.showNotification("Ungültige Menge", "error");
+                    return;
+                }
+
+                this.isLoading = true;
+
+                try {
+                    const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+                    const response = await fetch('/core/api/inventory-correct/', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+                        body: JSON.stringify({ 
+                            product_id: this.activeProduct.id,
+                            counted_qty: counted 
+                        })
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        // Historie updaten
+                        this.history.unshift({
+                            name: result.product_name,
+                            old: result.old_stock,
+                            new: result.new_stock,
+                            diff: result.diff,
+                            time: new Date().toLocaleTimeString()
+                        });
+                        if (this.history.length > 5) this.history.pop();
+
+                        let msg = result.diff === 0 ? "Bestand bestätigt." : `Korrektur gebucht (${result.diff > 0 ? '+' : ''}${result.diff})`;
+                        this.showNotification(msg, "success");
+                        
+                        // Reset
+                        this.activeProduct = null;
+                        this.focusSearch();
+                    } else {
+                        this.showNotification('Fehler: ' + result.error, 'error');
+                    }
+                } catch (err) {
+                    this.showNotification('Netzwerkfehler', 'error');
+                } finally {
+                    this.isLoading = false;
+                }
+            },
+
+            cancelSelection() {
+                this.activeProduct = null;
+                this.focusSearch();
+            }
+        }
+    }
+</script>
+
+<style>
+    /* Styling Reuse */
+    #reader { width: 100%; border-radius: 8px; overflow: hidden; background: #000; min-height: 250px; }
+    #reader video { object-fit: cover; border-radius: 8px; }
+    .scanner-controls { background: #f8f9fa; padding: 10px; border-radius: 0 0 8px 8px; border: 1px solid #ddd; border-top: none; margin-bottom: 15px; }
+    .zoom-slider { width: 100%; }
+
+    .search-box { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }
+    .product-list { list-style: none; padding: 0; margin: 0; max-height: 200px; overflow-y: auto; border: 1px solid #eee; display: none; }
+    .product-list.active { display: block; }
+    .product-list li { padding: 10px; border-bottom: 1px solid #eee; cursor: pointer; }
+    .product-list li:hover { background-color: #f0f4f8; }
+    
+    .toast-notification { position: fixed; bottom: 20px; right: 20px; padding: 15px 25px; border-radius: 8px; color: white; font-weight: bold; box-shadow: 0 4px 12px rgba(0,0,0,0.2); z-index: 10000; display: flex; align-items: center; gap: 10px; animation: slideIn 0.3s ease-out; }
+    .toast-success { background-color: #28a745; } .toast-error { background-color: #dc3545; } .toast-warning { background-color: #ffc107; color: #333; }
+    @keyframes slideIn { from { transform: translateY(100px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+    /* Inventory Specific */
+    .count-box { background: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); text-align: center; }
+    .history-item { font-size: 0.9rem; padding: 8px; border-bottom: 1px solid #eee; }
+    .diff-pos { color: green; } .diff-neg { color: red; } .diff-zero { color: #888; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid" style="max-width: 1200px;" x-data="inventoryApp()" x-init="init()">
+    {% csrf_token %}
+
+    <!-- TOAST -->
+    <div x-show="toast.show" class="toast-notification"
+         :class="{ 'toast-success': toast.type === 'success', 'toast-error': toast.type === 'error', 'toast-warning': toast.type === 'warning' }"
+         style="display: none;"
+         x-transition:leave="transition ease-in duration-300" x-transition:leave-start="opacity-100 transform translate-y-0" x-transition:leave-end="opacity-0 transform translate-y-8">
+        <i class="fas" :class="{ 'fa-check-circle': toast.type === 'success', 'fa-exclamation-circle': toast.type === 'error', 'fa-exclamation-triangle': toast.type === 'warning' }"></i>
+        <span x-text="toast.message"></span>
+    </div>
+
+    <div class="row mb-3">
+        <div class="col-12">
+            <h2><i class="fas fa-clipboard-check text-warning"></i> Inventur / Lagerkorrektur</h2>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- LINKS: Scanner & Suche -->
+        <div class="col-md-6">
+            <!-- SCANNER -->
+            <div class="card mb-3 border-0 shadow-sm">
+                <div class="card-body p-0">
+                    <div id="reader"></div>
+                    <div class="scanner-controls" x-show="showScannerControls" style="display: none;">
+                        <div class="d-flex align-items-center">
+                            <i class="fas fa-search-minus mr-2 text-muted"></i>
+                            <input type="range" id="zoom-slider" class="zoom-slider custom-range" min="1" max="5" step="0.1" value="1">
+                            <i class="fas fa-search-plus ml-2 text-muted"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SEARCH -->
+            <div class="search-box">
+                <label class="h5 mb-3 d-block">Produkt wählen</label>
+                <div class="input-group input-group-lg">
+                    <input type="text" id="search-input" class="form-control" placeholder="EAN scannen..." 
+                           x-model="searchQuery" 
+                           @keydown.enter.prevent="performSearch(true)" 
+                           @input.debounce.300ms="performSearch(false)"
+                           :disabled="activeProduct !== null"
+                           autofocus>
+                    <div class="input-group-append">
+                        <button class="btn btn-primary" @click="performSearch(true)" :disabled="activeProduct !== null">Suchen</button>
+                    </div>
+                </div>
+                
+                <ul class="product-list mt-2" :class="{ 'active': searchResults.length > 0 }">
+                    <template x-for="product in searchResults" :key="product.id">
+                        <li @click="selectProduct(product)">
+                            <div class="d-flex justify-content-between">
+                                <div>
+                                    <strong x-text="product.name"></strong><br>
+                                    <small class="text-muted">EAN: <span x-text="product.ean"></span></small>
+                                </div>
+                                <div class="font-weight-bold text-primary">Auswählen</div>
+                            </div>
+                        </li>
+                    </template>
+                </ul>
+            </div>
+        </div>
+
+        <!-- RECHTS: Zählen & Historie -->
+        <div class="col-md-6">
+            
+            <!-- AKTIVES PRODUKT (Eingabemaske) -->
+            <div class="count-box mb-4" x-show="activeProduct" x-transition>
+                <h4 class="text-muted mb-1">Gewähltes Produkt:</h4>
+                <h3 class="mb-3" x-text="activeProduct.name"></h3>
+                
+                <div class="row mb-4">
+                    <div class="col-6 border-right">
+                        <small class="text-uppercase text-muted">Soll-Bestand</small>
+                        <div class="h2 font-weight-bold text-primary" x-text="activeProduct.stock"></div>
+                    </div>
+                    <div class="col-6">
+                         <small class="text-uppercase text-muted">Differenz</small>
+                         <div class="h2 font-weight-bold" 
+                              :class="{'diff-pos': (parseInt(countedQty) - activeProduct.stock) > 0, 'diff-neg': (parseInt(countedQty) - activeProduct.stock) < 0, 'diff-zero': (parseInt(countedQty) - activeProduct.stock) === 0}"
+                              x-text="(parseInt(countedQty) || 0) - activeProduct.stock">
+                         </div>
+                    </div>
+                </div>
+
+                <div class="form-group text-left">
+                    <label><strong>Gezählter Bestand (Ist):</strong></label>
+                    <input type="number" id="count-input" class="form-control form-control-lg text-center font-weight-bold" 
+                           style="font-size: 2rem; height: 70px;"
+                           x-model="countedQty" 
+                           @keydown.enter.prevent="submitCorrection()">
+                </div>
+
+                <div class="d-flex gap-2 mt-4">
+                    <button class="btn btn-secondary flex-fill btn-lg mr-2" @click="cancelSelection()">Abbrechen</button>
+                    <button class="btn btn-success flex-fill btn-lg" @click="submitCorrection()" :disabled="isLoading || countedQty === ''">
+                        <i class="fas fa-check"></i> Korrektur buchen
+                    </button>
+                </div>
+            </div>
+
+            <!-- PLATZHALTER WENN NICHTS GEWÄHLT -->
+            <div class="alert alert-light text-center py-5 border" x-show="!activeProduct">
+                <i class="fas fa-box-open fa-3x text-muted mb-3"></i>
+                <h5>Bereit für Inventur</h5>
+                <p class="text-muted">Scannen Sie ein Produkt links, um den Bestand zu korrigieren.</p>
+            </div>
+
+            <!-- HISTORIE -->
+            <div class="card mt-4" x-show="history.length > 0">
+                <div class="card-header bg-dark text-white py-2">Letzte Korrekturen</div>
+                <div class="card-body p-0">
+                    <template x-for="entry in history">
+                        <div class="history-item d-flex justify-content-between align-items-center">
+                            <div>
+                                <span class="font-weight-bold" x-text="entry.name"></span><br>
+                                <small class="text-muted" x-text="entry.time"></small>
+                            </div>
+                            <div class="text-right">
+                                <span class="badge" 
+                                      :class="{'badge-success': entry.diff > 0, 'badge-danger': entry.diff < 0, 'badge-secondary': entry.diff === 0}">
+                                    <span x-show="entry.diff > 0">+</span><span x-text="entry.diff"></span>
+                                </span>
+                                <br>
+                                <small class="text-muted"><span x-text="entry.old"></span> &rarr; <span x-text="entry.new"></span></small>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+{% endblock %}
