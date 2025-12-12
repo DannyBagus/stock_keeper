@@ -2,230 +2,149 @@
 {% load static %}
 
 {% block extrahead %}
+<script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+<script src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.3/dist/cdn.min.js"></script>
+
+<script>
+    function scannerApp() {
+        return {
+            searchQuery: '', searchResults: [], noResults: false,
+            scanner: null, isCameraActive: false, showScannerControls: false, scanCooldown: false,
+
+            init() { this.$nextTick(() => this.focusSearch()); },
+
+            focusSearch() {
+                const el = document.getElementById('search-input');
+                if(el) el.focus();
+            },
+
+            toggleCamera() { if (this.isCameraActive) this.stopCamera(); else this.startCameraScanner(); },
+            
+            startCameraScanner() {
+                this.isCameraActive = true;
+                this.$nextTick(() => {
+                    const formats = [Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8, Html5QrcodeSupportedFormats.QR_CODE, Html5QrcodeSupportedFormats.CODE_128, Html5QrcodeSupportedFormats.UPC_A];
+                    if (!this.scanner) this.scanner = new Html5Qrcode("reader");
+                    this.scanner.start({ facingMode: "environment" }, { fps: 15, qrbox: { width: 280, height: 180 }, aspectRatio: 1.0, formatsToSupport: formats, experimentalFeatures: { useBarCodeDetectorIfSupported: true } },
+                        (decodedText) => {
+                            if (this.scanCooldown) return;
+                            if (this.searchQuery !== decodedText) {
+                                this.scanCooldown = true; this.searchQuery = decodedText;
+                                if (navigator.vibrate) navigator.vibrate(200);
+                                this.performSearch(true);
+                                setTimeout(() => { this.scanCooldown = false; }, 1500);
+                            }
+                        }, (err) => {}
+                    ).then(() => { this.showScannerControls = true; this.setupZoom(); }).catch(err => { this.isCameraActive = false; });
+                });
+            },
+            stopCamera() {
+                if (this.scanner) this.scanner.stop().then(() => { this.isCameraActive = false; this.focusSearch(); }).catch(e=>{});
+                else this.isCameraActive = false;
+            },
+            setupZoom() {
+                const slider = document.getElementById('zoom-slider');
+                if(slider) slider.addEventListener('input', (e) => { try { this.scanner.applyVideoConstraints({ advanced: [{ zoom: parseFloat(e.target.value) }] }); } catch(e){} });
+            },
+
+            async performSearch(isEnterPress) {
+                if (this.searchQuery.length < 2) { this.searchResults = []; return; }
+                if (isEnterPress) this.scanCooldown = true;
+                const res = await fetch(`/commerce/api/search/?q=${this.searchQuery}`);
+                const data = await res.json();
+                this.searchResults = data.results;
+                this.noResults = this.searchResults.length === 0;
+                if (isEnterPress && this.searchResults.length === 1) this.openProduct(this.searchResults[0]);
+                if (isEnterPress && this.noResults) { setTimeout(() => { this.scanCooldown = false; }, 1000); this.searchQuery = ''; this.focusSearch(); }
+            },
+            openProduct(product) { window.location.href = `/admin/core/product/${product.id}/change/`; }
+        }
+    }
+</script>
+
 <style>
-    /* Optimierungen für Mobile View */
-    #reader {
-        width: 100%;
-        border-radius: 8px;
-        overflow: hidden;
-        background: #000;
-        margin-bottom: 15px;
-    }
-    #reader video {
-        object-fit: cover;
-        border-radius: 8px;
-    }
-    .scanner-controls {
-        background: #f8f9fa;
-        padding: 15px;
-        border-radius: 8px;
-        margin-bottom: 20px;
-        border: 1px solid #ddd;
-    }
-    .zoom-container {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        margin-top: 10px;
-    }
-    .zoom-slider {
-        flex-grow: 1;
-        height: 25px;
-    }
+    /* Identische Styles */
+    #reader { width: 100%; border-radius: 8px; overflow: hidden; background: #000; min-height: 250px; }
+    #reader video { object-fit: cover; border-radius: 8px; }
+    .scanner-controls { background: #f8f9fa; padding: 10px; border-radius: 0 0 8px 8px; border: 1px solid #ddd; border-top: none; margin-bottom: 15px; }
+    .zoom-slider { width: 100%; }
+    .search-box { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; border-left: 4px solid #17a2b8; } /* Info-Blau für Scanner */
+    .product-list { list-style: none; padding: 0; margin: 0; max-height: 400px; overflow-y: auto; border: 1px solid #eee; display: none; }
+    .product-list.active { display: block; }
+    .product-list li { padding: 12px; border-bottom: 1px solid #eee; cursor: pointer; transition: background 0.1s; }
+    .product-list li:hover { background-color: #f0f4f8; }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="col-12 col-lg-8 offset-lg-2">
-    <div class="card card-primary card-outline">
-        <div class="card-header d-flex justify-content-between align-items-center">
-            <h3 class="card-title"><i class="fas fa-barcode mr-2"></i> Produkt Scanner</h3>
+<div class="container-fluid" style="max-width: 800px;" x-data="scannerApp()" x-init="init()">
+    
+    <div class="row mb-3 align-items-center">
+        <div class="col-8">
+            <h2><i class="fas fa-search text-info"></i> Produkt finden & bearbeiten</h2>
         </div>
-        <div class="card-body">
-            
-            <!-- Handscanner Input (Immer sichtbar & fokussiert) -->
-            <form method="POST" id="scan-form" class="mb-4">
-                {% csrf_token %}
-                <div class="form-group">
-                    <label>Handscanner / Manuelle Eingabe</label>
-                    <div class="input-group input-group-lg">
-                        <input type="text" name="ean" id="ean-input" class="form-control" placeholder="EAN scannen oder tippen..." autofocus>
-                        <div class="input-group-append">
-                            <button class="btn btn-primary" type="submit">
-                                <i class="fas fa-search"></i>
-                            </button>
-                        </div>
-                    </div>
-                    <small class="form-text text-muted">Cursor hier platzieren und scannen.</small>
-                </div>
-            </form>
-
-            <hr>
-
-            <!-- Kamera Toggle Button -->
-            <div class="text-center mb-3">
-                <button id="toggle-camera-btn" class="btn btn-outline-secondary">
-                    <i class="fas fa-camera"></i> Kamera-Scanner öffnen
-                </button>
-            </div>
-
-            <!-- Kamera Bereich (Standardmäßig versteckt) -->
-            <div id="camera-section" style="display: none;">
-                <div id="reader" style="min-height: 300px;"></div>
-
-                <!-- Controls Area (Zoom & Torch) -->
-                <div class="scanner-controls" id="controls" style="display:none;">
-                    <div class="row">
-                        <div class="col-12 mb-2">
-                            <strong><i class="fas fa-search-plus"></i> Zoom</strong>
-                            <div class="zoom-container">
-                                <i class="fas fa-minus small"></i>
-                                <input type="range" id="zoom-slider" class="zoom-slider" min="1" max="5" step="0.1" value="1">
-                                <i class="fas fa-plus small"></i>
-                            </div>
-                        </div>
-                        <div class="col-6">
-                            <button id="torch-btn" class="btn btn-outline-warning btn-block btn-sm" disabled>
-                                <i class="fas fa-lightbulb"></i> Licht
-                            </button>
-                        </div>
-                        <div class="col-6">
-                            <button id="restart-btn" class="btn btn-outline-secondary btn-block btn-sm">
-                                <i class="fas fa-sync"></i> Neustart
-                            </button>
-                        </div>
-                    </div>
-                </div>
-                <div id="scan-result" class="mt-3 font-weight-bold text-center text-success h5"></div>
-            </div>
-
+        <div class="col-4 text-right">
+            <button class="btn btn-outline-secondary btn-sm" @click="toggleCamera()">
+                <i class="fas" :class="isCameraActive ? 'fa-times' : 'fa-camera'"></i> 
+                <span x-text="isCameraActive ? 'Kamera aus' : 'Kamera an'"></span>
+            </button>
         </div>
     </div>
+
+    <!-- KAMERA -->
+    <div class="card mb-3 border-0 shadow-sm" x-show="isCameraActive" style="display: none;">
+        <div class="card-body p-0">
+            <div id="reader"></div>
+            <div class="scanner-controls" x-show="showScannerControls">
+                <div class="d-flex align-items-center">
+                    <i class="fas fa-search-minus mr-2 text-muted"></i>
+                    <input type="range" id="zoom-slider" class="zoom-slider custom-range" min="1" max="5" step="0.1" value="1">
+                    <i class="fas fa-search-plus ml-2 text-muted"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- SUCHE -->
+    <div class="search-box">
+        <label class="h5 mb-3 d-block text-muted">Produkt scannen oder suchen</label>
+        <div class="input-group input-group-lg mb-3">
+            <input type="text" id="search-input" class="form-control" 
+                   placeholder="EAN oder Name..." 
+                   x-model="searchQuery" 
+                   @keydown.enter.prevent="performSearch(true)" 
+                   @input.debounce.300ms="performSearch(false)"
+                   autofocus>
+            <div class="input-group-append">
+                <button class="btn btn-primary" @click="performSearch(true)">
+                    <i class="fas fa-search"></i>
+                </button>
+            </div>
+        </div>
+        
+        <ul class="product-list" :class="{ 'active': searchResults.length > 0 }">
+            <template x-for="product in searchResults" :key="product.id">
+                <li @click="openProduct(product)">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <strong x-text="product.name" class="h5 d-block mb-1"></strong>
+                            <span class="badge badge-light border mr-1" x-text="product.ean || 'Keine EAN'"></span>
+                            <span class="text-muted small">Lager: <span x-text="product.stock"></span></span>
+                        </div>
+                        <div>
+                            <i class="fas fa-chevron-right text-muted"></i>
+                        </div>
+                    </div>
+                </li>
+            </template>
+        </ul>
+        
+        <div x-show="noResults" class="alert alert-warning mt-3">
+            <i class="fas fa-exclamation-triangle mr-2"></i> Kein Produkt gefunden.
+            <br>
+            <small>Möchten Sie ein <a href="/admin/core/product/add/" class="font-weight-bold">neues Produkt anlegen</a>?</small>
+        </div>
+    </div>
+
 </div>
-
-<script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
-
-<script>
-    // Globale Variable für den Scanner
-    let html5QrCode = null;
-
-    // Toggle Logik
-    document.getElementById('toggle-camera-btn').addEventListener('click', function() {
-        const section = document.getElementById('camera-section');
-        if (section.style.display === 'none') {
-            section.style.display = 'block';
-            this.innerHTML = '<i class="fas fa-times"></i> Kamera schließen';
-            this.classList.remove('btn-outline-secondary');
-            this.classList.add('btn-secondary');
-            startCamera(); // Erst jetzt starten wir die Kamera
-        } else {
-            section.style.display = 'none';
-            this.innerHTML = '<i class="fas fa-camera"></i> Kamera-Scanner öffnen';
-            this.classList.add('btn-outline-secondary');
-            this.classList.remove('btn-secondary');
-            if(html5QrCode) {
-                html5QrCode.stop().then(() => {
-                    console.log("Kamera gestoppt");
-                }).catch(err => console.log(err));
-            }
-            // Fokus zurück auf Input
-            document.getElementById('ean-input').focus();
-        }
-    });
-
-    const onScanSuccess = (decodedText, decodedResult) => {
-        if (document.getElementById('ean-input').value === decodedText) return;
-
-        if (navigator.vibrate) navigator.vibrate(200);
-
-        document.getElementById('ean-input').value = decodedText;
-        document.getElementById('scan-result').innerText = "Gelesen: " + decodedText;
-
-        setTimeout(() => {
-             document.getElementById('scan-form').submit();
-        }, 600);
-    };
-
-    const startCamera = () => {
-        const formatsToSupport = [
-            Html5QrcodeSupportedFormats.EAN_13,
-            Html5QrcodeSupportedFormats.EAN_8,
-            Html5QrcodeSupportedFormats.QR_CODE,
-            Html5QrcodeSupportedFormats.CODE_128,
-            Html5QrcodeSupportedFormats.UPC_A,
-        ];
-
-        const config = {
-            fps: 15, 
-            qrbox: { width: 280, height: 180 }, 
-            aspectRatio: 1.0,
-            formatsToSupport: formatsToSupport,
-            experimentalFeatures: { useBarCodeDetectorIfSupported: true }
-        };
-
-        html5QrCode = new Html5Qrcode("reader");
-
-        html5QrCode.start(
-            { facingMode: "environment" }, 
-            config,
-            onScanSuccess,
-            (errorMessage) => { }
-        ).then(() => {
-            document.getElementById('controls').style.display = 'block';
-            setupCameraControls();
-        }).catch((err) => {
-            console.error(err);
-            alert("Kamera konnte nicht gestartet werden (HTTPS?).");
-        });
-    };
-
-    const setupCameraControls = () => {
-        try {
-            const zoomSlider = document.getElementById('zoom-slider');
-            zoomSlider.addEventListener('input', (event) => {
-                applyZoom(event.target.value);
-            });
-
-            const torchBtn = document.getElementById('torch-btn');
-            torchBtn.disabled = false; 
-            torchBtn.addEventListener('click', () => {
-                toggleTorch();
-            });
-
-        } catch (e) {
-            console.log("Erweiterte Kamera-Kontrollen nicht verfügbar", e);
-        }
-    };
-
-    const applyZoom = (zoomValue) => {
-        try {
-            html5QrCode.applyVideoConstraints({
-                advanced: [{ zoom: parseFloat(zoomValue) }]
-            });
-        } catch (err) {}
-    };
-
-    let isTorchOn = false;
-    const toggleTorch = () => {
-        try {
-            isTorchOn = !isTorchOn;
-            html5QrCode.applyVideoConstraints({
-                advanced: [{ torch: isTorchOn }]
-            });
-            // Button Style Logik...
-        } catch (err) {}
-    };
-
-    document.getElementById('restart-btn').addEventListener('click', () => {
-        html5QrCode.stop().then(() => {
-            startCamera();
-        });
-    });
-
-    // WICHTIG: Fokus beim Laden setzen (für Handscanner)
-    window.onload = function() {
-        document.getElementById('ean-input').focus();
-    };
-
-</script>
 {% endblock %}

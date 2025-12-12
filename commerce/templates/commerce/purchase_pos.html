@@ -3,260 +3,135 @@
 
 {% block extrahead %}
 <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+<script src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.3/dist/cdn.min.js"></script>
 
 <script>
     function purchaseApp() {
         return {
-            supplierId: '',
-            searchQuery: '',
-            searchResults: [],
-            cart: [],
-            noResults: false,
-            isLoading: false,
-            
-            showCheckoutModal: false,
-            showSuccessModal: false,
-            createdOrderId: null,
-            createdRedirectUrl: '',
-
-            // Scanner
-            scanner: null,
-            isCameraActive: false,
-            showScannerControls: false,
-            scanCooldown: false,
-
+            // State
+            supplierId: '', searchQuery: '', searchResults: [], cart: [], noResults: false, isLoading: false,
+            showCheckoutModal: false, showSuccessModal: false, createdOrderId: null, createdRedirectUrl: '',
+            scanner: null, isCameraActive: false, showScannerControls: false, scanCooldown: false,
             toast: { show: false, message: '', type: 'success' },
 
-            init() {
-                // Kein Auto-Start der Kamera mehr
-                this.$nextTick(() => this.focusInput());
-            },
+            init() { this.$nextTick(() => this.focusSearch()); },
 
-            toggleCamera() {
-                if (this.isCameraActive) {
-                    this.stopCamera();
-                } else {
-                    this.startCameraScanner();
-                }
-            },
-
-            stopCamera() {
-                if (this.scanner) {
-                    this.scanner.stop().then(() => {
-                        this.isCameraActive = false;
-                        this.focusInput();
-                    }).catch(err => console.log(err));
-                } else {
-                    this.isCameraActive = false;
-                }
-            },
-
+            // Actions
+            focusSearch() { document.getElementById('search-input').focus(); },
+            toggleCamera() { if (this.isCameraActive) this.stopCamera(); else this.startCameraScanner(); },
+            
+            // Scanner
             startCameraScanner() {
                 this.isCameraActive = true;
-                
                 this.$nextTick(() => {
-                    const formats = [
-                        Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8,
-                        Html5QrcodeSupportedFormats.QR_CODE, Html5QrcodeSupportedFormats.CODE_128
-                    ];
-                    if (!this.scanner) {
-                        this.scanner = new Html5Qrcode("reader");
-                    }
-                    this.scanner.start(
-                        { facingMode: "environment" },
-                        { fps: 15, qrbox: { width: 280, height: 180 }, aspectRatio: 1.0, formatsToSupport: formats, experimentalFeatures: { useBarCodeDetectorIfSupported: true } },
+                    const formats = [Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8, Html5QrcodeSupportedFormats.QR_CODE, Html5QrcodeSupportedFormats.CODE_128, Html5QrcodeSupportedFormats.UPC_A];
+                    if (!this.scanner) this.scanner = new Html5Qrcode("reader");
+                    this.scanner.start({ facingMode: "environment" }, { fps: 15, qrbox: { width: 280, height: 180 }, aspectRatio: 1.0, formatsToSupport: formats, experimentalFeatures: { useBarCodeDetectorIfSupported: true } },
                         (decodedText) => {
                             if (this.scanCooldown) return;
                             if (this.searchQuery !== decodedText) {
-                                this.scanCooldown = true;
-                                this.searchQuery = decodedText;
+                                this.scanCooldown = true; this.searchQuery = decodedText;
                                 if (navigator.vibrate) navigator.vibrate(200);
                                 this.performSearch(true);
                                 setTimeout(() => { this.scanCooldown = false; }, 1500);
                             }
-                        },
-                        (err) => {}
-                    ).then(() => {
-                        this.showScannerControls = true;
-                        this.setupZoom();
-                    }).catch(err => {
-                        this.isCameraActive = false;
-                        this.showNotification("Kamera konnte nicht gestartet werden.", "error");
-                    });
+                        }, (err) => {}
+                    ).then(() => { this.showScannerControls = true; this.setupZoom(); }).catch(err => { this.isCameraActive = false; this.showNotification("Kamera-Fehler", "error"); });
                 });
             },
-
+            stopCamera() {
+                if (this.scanner) this.scanner.stop().then(() => { this.isCameraActive = false; this.focusSearch(); }).catch(e=>{});
+                else this.isCameraActive = false;
+            },
             setupZoom() {
                 const slider = document.getElementById('zoom-slider');
-                if(slider) {
-                    slider.addEventListener('input', (e) => {
-                        try { this.scanner.applyVideoConstraints({ advanced: [{ zoom: parseFloat(e.target.value) }] }); } catch(e){}
-                    });
-                }
+                if(slider) slider.addEventListener('input', (e) => { try { this.scanner.applyVideoConstraints({ advanced: [{ zoom: parseFloat(e.target.value) }] }); } catch(e){} });
             },
-            
-            // ... (Restliche Funktionen bleiben exakt gleich wie bisher) ...
-            // (Um Platz zu sparen, nur die geänderten UI Teile unten)
-            
+
+            // App Logic
             async performSearch(isEnterPress) {
                 if (this.searchQuery.length < 2) return;
-                
                 if (isEnterPress) this.scanCooldown = true;
-
                 const res = await fetch(`/commerce/api/search/?q=${this.searchQuery}`);
                 const data = await res.json();
                 this.searchResults = data.results;
                 this.noResults = this.searchResults.length === 0;
-                
                 if (this.noResults && isEnterPress) {
-                     this.showNotification(`Produkt '${this.searchQuery}' nicht gefunden`, 'error');
+                     this.showNotification(`'${this.searchQuery}' nicht gefunden`, 'error');
                      setTimeout(() => { this.scanCooldown = false; }, 1500);
-                     this.searchQuery = '';
-                     this.focusInput();
+                     this.searchQuery = ''; this.focusSearch();
                 }
-
-                if (isEnterPress && this.searchResults.length === 1) {
-                    this.addToCart(this.searchResults[0]);
-                }
-            },
-    
-            addToCart(product) {
-                if (!product.supplier_id) {
-                    this.showNotification(`Achtung: '${product.name}' hat keinen Lieferanten!`, 'warning');
-                    return;
-                }
-                if (this.supplierId && String(this.supplierId) !== String(product.supplier_id)) {
-                    this.showNotification(`Konflikt: '${product.name}' gehört nicht zum gewählten Lieferanten!`, 'error');
-                    return;
-                }
-                if (!this.supplierId) {
-                    this.supplierId = product.supplier_id;
-                }
-
-                const existingItem = this.cart.find(item => item.id === product.id);
-                if (existingItem) {
-                    existingItem.qty++;
-                } else {
-                    this.cart.push({
-                        id: product.id,
-                        name: product.name,
-                        price: product.cost,
-                        ean: product.ean,
-                        qty: 1
-                    });
-                }
-                
-                this.showNotification(`${product.name} hinzugefügt (+1)`);
-                this.searchQuery = '';
-                this.searchResults = [];
-                this.noResults = false;
-                this.$nextTick(() => this.focusInput());
-            },
-    
-            updateQty(index, change) {
-                const item = this.cart[index];
-                item.qty += change;
-                if (item.qty <= 0) this.removeFromCart(index);
-                this.focusInput();
-            },
-    
-            removeFromCart(index) {
-                this.cart.splice(index, 1);
-                if (this.cart.length === 0) {
-                    this.supplierId = '';
-                }
-                this.focusInput();
-            },
-    
-            get cartTotal() {
-                return this.cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
+                if (isEnterPress && this.searchResults.length === 1) { this.addToCart(this.searchResults[0]); }
             },
             
-            get cartTotalDisplay() {
-                return parseFloat(this.cartTotal).toFixed(2) + ' CHF';
+            addToCart(product) {
+                if (!product.supplier_id) { this.showNotification('Kein Lieferant!', 'warning'); return; }
+                if (this.supplierId && String(this.supplierId) !== String(product.supplier_id)) { this.showNotification('Falscher Lieferant!', 'error'); return; }
+                if (!this.supplierId) this.supplierId = product.supplier_id;
+
+                const existingItem = this.cart.find(item => item.id === product.id);
+                if (existingItem) existingItem.qty++;
+                else this.cart.push({ id: product.id, name: product.name, price: product.cost, ean: product.ean, qty: 1, supplier_name: product.supplier_name });
+                
+                this.showNotification(`${product.name} +1`);
+                this.searchQuery = ''; this.searchResults = []; this.noResults = false;
+                this.$nextTick(() => this.focusSearch());
             },
-    
+
+            updateQty(index, change) {
+                const item = this.cart[index]; item.qty += change;
+                if (item.qty <= 0) this.removeFromCart(index);
+                this.focusSearch();
+            },
+            removeFromCart(index) {
+                this.cart.splice(index, 1);
+                if (this.cart.length === 0) this.supplierId = '';
+                this.focusSearch();
+            },
+            get cartTotal() { return this.cart.reduce((sum, item) => sum + (item.price * item.qty), 0); },
+            get cartTotalDisplay() { return parseFloat(this.cartTotal).toFixed(2) + ' CHF'; },
+            
             initiateSubmit() {
-                if (!this.supplierId) { 
-                    this.showNotification('Kein Lieferant ausgewählt.', 'warning'); 
-                    return; 
-                }
+                if (!this.supplierId) { this.showNotification('Kein Lieferant.', 'warning'); return; }
                 if (this.cart.length === 0) return;
                 this.showCheckoutModal = true;
             },
-
             async confirmSubmit() {
                 this.isLoading = true;
                 try {
                     const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
-                    const response = await fetch('/commerce/api/purchase-checkout/', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
-                        body: JSON.stringify({ supplier_id: this.supplierId, items: this.cart })
-                    });
+                    const response = await fetch('/commerce/api/purchase-checkout/', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken }, body: JSON.stringify({ supplier_id: this.supplierId, items: this.cart }) });
                     const result = await response.json();
                     if (result.success) {
-                        this.createdOrderId = result.order_id;
-                        this.createdRedirectUrl = result.redirect_url;
-                        this.cart = [];
-                        this.supplierId = '';
-                        this.showCheckoutModal = false;
-                        this.showSuccessModal = true;
-                    } else {
-                        this.showNotification('Fehler: ' + result.error, 'error');
-                        this.showCheckoutModal = false;
-                    }
-                } catch (err) {
-                    this.showNotification('Netzwerkfehler: ' + err, 'error');
-                } finally {
-                    this.isLoading = false;
-                }
+                        this.createdOrderId = result.order_id; this.createdRedirectUrl = result.redirect_url;
+                        this.cart = []; this.supplierId = '';
+                        this.showCheckoutModal = false; this.showSuccessModal = true;
+                    } else { this.showNotification(result.error, 'error'); this.showCheckoutModal = false; }
+                } catch (err) { this.showNotification('Netzwerkfehler', 'error'); } finally { this.isLoading = false; }
             },
-
-            goToOrder() {
-                if (this.createdRedirectUrl) window.location.href = this.createdRedirectUrl;
-            },
-
-            newOrder() {
-                this.showSuccessModal = false;
-                this.createdOrderId = null;
-                this.createdRedirectUrl = '';
-            },
-
-            focusInput() {
-                const input = document.getElementById('search-input');
-                if(input) input.focus();
-            },
-
-            showNotification(message, type = 'success') {
-                this.toast.message = message;
-                this.toast.type = type;
-                this.toast.show = true;
-                setTimeout(() => { this.toast.show = false; }, 3000);
-            }
+            goToOrder() { if (this.createdRedirectUrl) window.location.href = this.createdRedirectUrl; },
+            newOrder() { this.showSuccessModal = false; this.createdOrderId = null; this.createdRedirectUrl = ''; this.searchQuery = ''; this.focusSearch(); },
+            showNotification(message, type = 'success') { this.toast.message = message; this.toast.type = type; this.toast.show = true; setTimeout(() => { this.toast.show = false; }, 3000); }
         }
     }
 </script>
-<script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
 
 <style>
-    /* Gleiche Styles wie bei POS */
+    /* Identische Styles wie POS */
     #reader { width: 100%; border-radius: 8px; overflow: hidden; background: #000; min-height: 250px; }
     #reader video { object-fit: cover; border-radius: 8px; }
     .scanner-controls { background: #f8f9fa; padding: 10px; border-radius: 0 0 8px 8px; border: 1px solid #ddd; border-top: none; margin-bottom: 15px; }
     .zoom-slider { width: 100%; }
-    .search-box { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }
+    .search-box { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; border-left: 4px solid #4e73df; } /* Blau für Purchase */
     .product-list { list-style: none; padding: 0; margin: 0; max-height: 200px; overflow-y: auto; border: 1px solid #eee; display: none; }
     .product-list.active { display: block; }
-    .product-list li { padding: 10px; border-bottom: 1px solid #eee; cursor: pointer; }
+    .product-list li { padding: 12px; border-bottom: 1px solid #eee; cursor: pointer; transition: background 0.1s; }
     .product-list li:hover { background-color: #f0f4f8; }
-    .cart-header { background-color: #004a99; color: white; }
+    .cart-header { background-color: #4e73df; color: white; } /* Blau */
     .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 9999; }
     .modal-box { background: white; border-radius: 8px; width: 90%; max-width: 500px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); overflow: hidden; animation: fadeIn 0.2s ease-out; }
     .toast-notification { position: fixed; bottom: 20px; right: 20px; padding: 15px 25px; border-radius: 8px; color: white; font-weight: bold; box-shadow: 0 4px 12px rgba(0,0,0,0.2); z-index: 10000; display: flex; align-items: center; gap: 10px; animation: slideIn 0.3s ease-out; max-width: 90%; }
-    .toast-success { background-color: #28a745; }
-    .toast-error { background-color: #dc3545; }
-    .toast-warning { background-color: #ffc107; color: #333; }
+    .toast-success { background-color: #28a745; } .toast-error { background-color: #dc3545; } .toast-warning { background-color: #ffc107; color: #333; }
     @keyframes slideIn { from { transform: translateY(100px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
 </style>
@@ -265,72 +140,27 @@
 {% block content %}
 <div class="container-fluid" style="max-width: 1200px;" x-data="purchaseApp()" x-init="init()">
     {% csrf_token %}
-    
-    <!-- TOAST (Identisch zu POS) -->
-    <div x-show="toast.show" class="toast-notification"
-         :class="{ 'toast-success': toast.type === 'success', 'toast-error': toast.type === 'error', 'toast-warning': toast.type === 'warning' }"
-         style="display: none;"
-         x-transition:leave="transition ease-in duration-300" x-transition:leave-start="opacity-100 transform translate-y-0" x-transition:leave-end="opacity-0 transform translate-y-8">
-        <i class="fas" :class="{ 'fa-check-circle': toast.type === 'success', 'fa-exclamation-circle': toast.type === 'error', 'fa-exclamation-triangle': toast.type === 'warning' }"></i>
+    <div x-show="toast.show" class="toast-notification" :class="'toast-'+toast.type" style="display: none;" x-transition>
         <span x-text="toast.message"></span>
     </div>
 
-    <!-- MODALS (Identisch zu POS) -->
-    <div class="modal-overlay" x-show="showCheckoutModal" style="display: none;">
-        <div class="modal-box" @click.away="showCheckoutModal = false">
-            <div class="modal-header bg-primary text-white">
-                <h5 class="modal-title">Bestellung anlegen?</h5>
-                <button type="button" class="close text-white" @click="showCheckoutModal = false">&times;</button>
-            </div>
-            <div class="modal-body text-center p-4">
-                <p>Summe (Netto):</p>
-                <h1 class="display-4 font-weight-bold text-primary" x-text="cartTotalDisplay"></h1>
-                <p>Anzahl Positionen: <span x-text="cart.length"></span></p>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" @click="showCheckoutModal = false">Abbrechen</button>
-                <button type="button" class="btn btn-primary pl-4 pr-4" @click="confirmSubmit()" :disabled="isLoading">
-                    <span x-show="!isLoading">Ja, Anlegen</span>
-                    <span x-show="isLoading"><i class="fas fa-spinner fa-spin"></i></span>
-                </button>
-            </div>
+    <!-- HEADER -->
+    <div class="row mb-3 align-items-center">
+        <div class="col-8">
+            <h2><i class="fas fa-truck-loading text-primary"></i> Bestellung erfassen</h2>
         </div>
-    </div>
-    
-    <div class="modal-overlay" x-show="showSuccessModal" style="display: none;">
-        <div class="modal-box">
-            <div class="modal-header bg-success text-white">
-                <h5 class="modal-title">Bestellung erstellt!</h5>
-            </div>
-            <div class="modal-body text-center p-4">
-                <div class="text-success mb-3" style="font-size: 3rem;"><i class="fas fa-check-circle"></i></div>
-                <p>Bestellung #<span x-text="createdOrderId"></span> angelegt.</p>
-                <div class="mt-4">
-                    <button class="btn btn-primary btn-lg btn-block mb-2" @click="goToOrder()">
-                        <i class="fas fa-edit"></i> Zur Bestellung
-                    </button>
-                    <button class="btn btn-outline-secondary btn-lg btn-block" @click="newOrder()">
-                        <i class="fas fa-plus"></i> Neue Erfassung
-                    </button>
-                </div>
-            </div>
+        <div class="col-4 text-right">
+             <button class="btn btn-outline-secondary btn-sm" @click="toggleCamera()">
+                <i class="fas" :class="isCameraActive ? 'fa-times' : 'fa-camera'"></i> 
+                <span x-text="isCameraActive ? 'Kamera aus' : 'Kamera an'"></span>
+            </button>
         </div>
     </div>
 
-    <!-- MAIN UI -->
     <div class="row">
-        <!-- LINKER BEREICH -->
+        <!-- LINKS -->
         <div class="col-md-7">
-            
-            <!-- KAMERA TOGGLE BUTTON -->
-            <div class="mb-3 text-right">
-                <button class="btn btn-outline-secondary btn-sm" @click="toggleCamera()">
-                    <i class="fas" :class="isCameraActive ? 'fa-times' : 'fa-camera'"></i> 
-                    <span x-text="isCameraActive ? 'Kamera schließen' : 'Kamera-Scanner nutzen'"></span>
-                </button>
-            </div>
-
-            <!-- SCANNER (Nur sichtbar wenn Aktiv) -->
+            <!-- KAMERA -->
             <div class="card mb-3 border-0 shadow-sm" x-show="isCameraActive" style="display: none;">
                 <div class="card-body p-0">
                     <div id="reader"></div>
@@ -338,17 +168,20 @@
                         <div class="d-flex align-items-center">
                             <i class="fas fa-search-minus mr-2 text-muted"></i>
                             <input type="range" id="zoom-slider" class="zoom-slider custom-range" min="1" max="5" step="0.1" value="1">
-                            <i class="fas fa-search-plus ml-2 text-muted"></i>
                         </div>
                     </div>
                 </div>
             </div>
 
+            <!-- SUCHE -->
             <div class="search-box">
-                <label class="h5 mb-3 d-block">Produkte hinzufügen (Scan/Suche)</label>
+                <label class="h5 mb-3 d-block text-muted">Produkt scannen oder suchen</label>
                 <div class="input-group input-group-lg">
-                    <input type="text" id="search-input" class="form-control" placeholder="EAN..." x-model="searchQuery"
-                           @keydown.enter.prevent="performSearch(true)" @input.debounce.300ms="performSearch(false)" autofocus>
+                    <input type="text" id="search-input" class="form-control" placeholder="EAN oder Name..." 
+                           x-model="searchQuery" 
+                           @keydown.enter.prevent="performSearch(true)" 
+                           @input.debounce.300ms="performSearch(false)"
+                           autofocus>
                     <div class="input-group-append">
                         <button class="btn btn-primary" @click="performSearch(true)">Suchen</button>
                     </div>
@@ -368,8 +201,9 @@
                 </ul>
             </div>
 
-            <div class="search-box border-left-primary" style="border-left: 4px solid #004a99;">
-                <label class="h5 mb-3 d-block">Lieferant (Automatisch)</label>
+            <!-- LIEFERANT -->
+            <div class="search-box border-left-primary" style="border-left: 4px solid #4e73df;">
+                <label class="h5 mb-3 d-block text-muted">Lieferant (Automatisch)</label>
                 <select class="form-control form-control-lg" x-model="supplierId" disabled>
                     <option value="" disabled selected>-- Wird durch ersten Scan gesetzt --</option>
                     {% for s in suppliers %}
@@ -379,15 +213,15 @@
             </div>
         </div>
 
-        <!-- RECHTER BEREICH -->
+        <!-- RECHTS -->
         <div class="col-md-5">
             <div class="card shadow">
                 <div class="card-header cart-header">
                     <h4 class="m-0"><i class="fas fa-list"></i> Bestellliste</h4>
                 </div>
                 <div class="card-body p-0">
-                    <div class="table-responsive" style="max-height: 500px; overflow-y: auto;">
-                        <table class="table table-striped mb-0">
+                    <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                        <table class="table table-striped mb-0 cart-table">
                             <thead>
                                 <tr>
                                     <th>Produkt</th>
@@ -411,11 +245,14 @@
                                             </div>
                                         </td>
                                         <td class="text-right"><span x-text="(item.price * item.qty).toFixed(2)"></span></td>
-                                        <td><button class="btn btn-sm btn-danger" @click="removeFromCart(index)">&times;</button></td>
+                                        <td><button class="btn btn-sm btn-danger text-white" @click="removeFromCart(index)">&times;</button></td>
                                     </tr>
                                 </template>
                                 <tr x-show="cart.length === 0">
-                                    <td colspan="4" class="text-center py-4 text-muted">Noch keine Artikel.</td>
+                                    <td colspan="4" class="text-center py-5 text-muted">
+                                        <i class="fas fa-clipboard-list fa-3x mb-3 text-gray-300"></i><br>
+                                        Liste leer. Scannen Sie Produkte.
+                                    </td>
                                 </tr>
                             </tbody>
                         </table>
@@ -429,6 +266,41 @@
                     <button class="btn btn-primary btn-block btn-lg" @click="initiateSubmit()" :disabled="cart.length === 0 || !supplierId || isLoading">
                         <i class="fas fa-save"></i> Bestellung anlegen
                     </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODALS -->
+    <div class="modal-overlay" x-show="showCheckoutModal" style="display: none;">
+        <div class="modal-box" @click.away="showCheckoutModal = false">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title">Bestellung anlegen?</h5>
+                <button type="button" class="close text-white" @click="showCheckoutModal = false">&times;</button>
+            </div>
+            <div class="modal-body text-center p-4">
+                <p>Summe (Netto):</p>
+                <h1 class="display-4 font-weight-bold text-primary" x-text="cartTotalDisplay"></h1>
+                <p>Anzahl Positionen: <span x-text="cart.length"></span></p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" @click="showCheckoutModal = false">Abbrechen</button>
+                <button type="button" class="btn btn-primary pl-4 pr-4" @click="confirmSubmit()" :disabled="isLoading">Ja, Anlegen</button>
+            </div>
+        </div>
+    </div>
+    <!-- Success Modal similar to POS -->
+    <div class="modal-overlay" x-show="showSuccessModal" style="display: none;">
+        <div class="modal-box">
+             <div class="modal-header bg-success text-white">
+                <h5 class="modal-title">Erstellt!</h5>
+            </div>
+            <div class="modal-body text-center p-4">
+                <div class="text-success mb-3" style="font-size: 3rem;"><i class="fas fa-check-circle"></i></div>
+                <p>Bestellung #<span x-text="createdOrderId"></span> angelegt.</p>
+                <div class="mt-4">
+                    <button class="btn btn-primary btn-lg btn-block mb-2" @click="goToOrder()">Bearbeiten (Admin)</button>
+                    <button class="btn btn-outline-secondary btn-lg btn-block" @click="newOrder()">Neue Bestellung</button>
                 </div>
             </div>
         </div>
