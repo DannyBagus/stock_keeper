@@ -13,19 +13,17 @@
             noResults: false,
             isLoading: false,
             
-            // Modal States
             showCheckoutModal: false,
             showSuccessModal: false,
-            
-            // Scanner (Kamera) Logic
-            scanner: null,
-            showScannerControls: false,
-            scanCooldown: false, 
-
             createdSaleId: null,
             createdPdfUrl: '',
 
-            // Toast State
+            // Scanner
+            scanner: null,
+            isCameraActive: false, // NEU: Steuert Sichtbarkeit
+            showScannerControls: false,
+            scanCooldown: false,
+
             toast: { show: false, message: '', type: 'success' },
 
             paymentMethod: 'CASH', 
@@ -33,16 +31,93 @@
 
             init() {
                 this.restoreState();
-                this.startCameraScanner();
+                // KEIN automatischer Kamerastart mehr!
                 this.$nextTick(() => this.focusInput());
-
-                // FIX: Automatische Speicherung bei JEDER Warenkorb-Änderung
+                
+                // Watcher für Cart Auto-Save
                 this.$watch('cart', () => {
                     this.saveState(this.paymentMethod);
                 });
             },
 
-            // Helper: Fokus immer auf das Eingabefeld setzen (Wichtig für Handscanner!)
+            // Toggle Funktion
+            toggleCamera() {
+                if (this.isCameraActive) {
+                    this.stopCamera();
+                } else {
+                    this.startCameraScanner();
+                }
+            },
+
+            stopCamera() {
+                if (this.scanner) {
+                    this.scanner.stop().then(() => {
+                        this.isCameraActive = false;
+                        this.focusInput();
+                    }).catch(err => console.log(err));
+                } else {
+                    this.isCameraActive = false;
+                }
+            },
+
+            startCameraScanner() {
+                this.isCameraActive = true;
+                
+                // Kurze Verzögerung damit das Div gerendert ist (wg. x-if/x-show)
+                this.$nextTick(() => {
+                    const formats = [
+                        Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8,
+                        Html5QrcodeSupportedFormats.QR_CODE, Html5QrcodeSupportedFormats.CODE_128,
+                        Html5QrcodeSupportedFormats.UPC_A
+                    ];
+                    
+                    // Neu instanziieren wenn nötig
+                    if (!this.scanner) {
+                        this.scanner = new Html5Qrcode("reader");
+                    }
+
+                    this.scanner.start(
+                        { facingMode: "environment" },
+                        { 
+                            fps: 15, 
+                            qrbox: { width: 280, height: 180 }, 
+                            aspectRatio: 1.0, 
+                            formatsToSupport: formats, 
+                            experimentalFeatures: { useBarCodeDetectorIfSupported: true } 
+                        },
+                        (decodedText) => {
+                            if (this.scanCooldown) return;
+                            if (this.searchQuery !== decodedText) {
+                                this.scanCooldown = true;
+                                this.searchQuery = decodedText;
+                                if (navigator.vibrate) navigator.vibrate(200);
+                                this.performSearch(true);
+                                setTimeout(() => { this.scanCooldown = false; }, 1500);
+                            }
+                        },
+                        (err) => {}
+                    ).then(() => {
+                        this.showScannerControls = true;
+                        this.setupZoom();
+                    }).catch(err => {
+                        console.log("Kamera Fehler:", err);
+                        this.isCameraActive = false;
+                        this.showNotification("Kamera konnte nicht gestartet werden.", "error");
+                    });
+                });
+            },
+
+            // ... (Restliche Funktionen: setupZoom, performSearch, addToCart, etc. BLEIBEN GLEICH) ...
+            
+            setupZoom() {
+                const slider = document.getElementById('zoom-slider');
+                if(slider) {
+                    slider.addEventListener('input', (e) => {
+                        try { this.scanner.applyVideoConstraints({ advanced: [{ zoom: parseFloat(e.target.value) }] }); } catch(e){}
+                    });
+                }
+            },
+
             focusInput() {
                 const input = document.getElementById('search-input');
                 if(input) input.focus();
@@ -54,12 +129,10 @@
                 this.toast.show = true;
                 setTimeout(() => { this.toast.show = false; }, 3000);
             },
-
-            // --- STATE MANAGEMENT ---
+            
             saveState(method) {
                 try {
                     localStorage.setItem('pos_cart', JSON.stringify(this.cart));
-                    // Wir speichern die aktuelle Methode oder 'CASH' als Fallback
                     localStorage.setItem('pos_payment_method', method || 'CASH');
                     localStorage.setItem('pos_active', 'true');
                 } catch(e) { console.error("Save state failed", e); }
@@ -76,12 +149,9 @@
                     try {
                         const savedCart = JSON.parse(localStorage.getItem('pos_cart'));
                         const savedMethod = localStorage.getItem('pos_payment_method');
-                        
                         if (savedCart && Array.isArray(savedCart)) {
                             this.cart = savedCart;
                             this.paymentMethod = savedMethod || 'CASH';
-                            
-                            // Wenn wir von SumUp kommen (Method ist SUMUP), öffnen wir direkt das Modal wieder
                             if (this.paymentMethod === 'SUMUP' && this.cart.length > 0) {
                                 this.showCheckoutModal = true;
                                 this.showNotification('Warenkorb & Zahlung wiederhergestellt.', 'info');
@@ -92,60 +162,9 @@
                     } catch (e) { console.error("Restore failed", e); }
                 }
             },
-            // ------------------------
 
-            // Kamera Scanner (als Fallback / Hybrid)
-            startCameraScanner() {
-                const formats = [
-                    Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8,
-                    Html5QrcodeSupportedFormats.QR_CODE, Html5QrcodeSupportedFormats.CODE_128,
-                    Html5QrcodeSupportedFormats.UPC_A
-                ];
-                
-                if(this.scanner) return; // Verhindert Doppel-Start
-
-                this.scanner = new Html5Qrcode("reader");
-                this.scanner.start(
-                    { facingMode: "environment" },
-                    { 
-                        fps: 15, 
-                        qrbox: { width: 280, height: 180 }, 
-                        aspectRatio: 1.0, 
-                        formatsToSupport: formats, 
-                        experimentalFeatures: { useBarCodeDetectorIfSupported: true } 
-                    },
-                    (decodedText) => {
-                        if (this.scanCooldown) return;
-                        if (this.searchQuery !== decodedText) {
-                            this.scanCooldown = true;
-                            this.searchQuery = decodedText;
-                            if (navigator.vibrate) navigator.vibrate(200);
-                            this.performSearch(true); // true = Enter gedrückt (Scan fertig)
-                            setTimeout(() => { this.scanCooldown = false; }, 1500);
-                        }
-                    },
-                    (err) => {}
-                ).then(() => {
-                    this.showScannerControls = true;
-                    this.setupZoom();
-                }).catch(err => {
-                    console.log("Kamera Scanner nicht gestartet (evtl. kein HTTPS oder keine Kamera). Handscanner funktioniert trotzdem.");
-                });
-            },
-
-            setupZoom() {
-                const slider = document.getElementById('zoom-slider');
-                if(slider) {
-                    slider.addEventListener('input', (e) => {
-                        try { this.scanner.applyVideoConstraints({ advanced: [{ zoom: parseFloat(e.target.value) }] }); } catch(e){}
-                    });
-                }
-            },
-            
-            // Such-Logik (Wird auch vom Handscanner via Enter ausgelöst)
             async performSearch(isEnterPress) {
                 if (this.searchQuery.length < 2) return;
-                
                 if (isEnterPress) this.scanCooldown = true;
 
                 const res = await fetch(`/commerce/api/search/?q=${this.searchQuery}`);
@@ -156,12 +175,9 @@
                 if (this.noResults && isEnterPress) {
                      this.showNotification(`Produkt '${this.searchQuery}' nicht gefunden`, 'error');
                      setTimeout(() => { this.scanCooldown = false; }, 1500);
-                     // Feld leeren und Fokus zurück
                      this.searchQuery = '';
                      this.focusInput();
                 }
-
-                // Auto-Add bei genau einem Treffer (Standard bei EAN Scan)
                 if (isEnterPress && this.searchResults.length === 1) {
                     this.addToCart(this.searchResults[0]);
                 }
@@ -180,13 +196,10 @@
                         qty: 1
                     });
                 }
-                
                 this.showNotification(`${product.name} hinzugefügt (+1)`);
                 this.searchQuery = '';
                 this.searchResults = [];
                 this.noResults = false;
-                
-                // WICHTIG: Sofort Fokus zurück für den nächsten Scan
                 this.$nextTick(() => this.focusInput());
             },
     
@@ -194,12 +207,12 @@
                 const item = this.cart[index];
                 item.qty += change;
                 if (item.qty <= 0) this.removeFromCart(index);
-                this.focusInput(); // Fokus halten
+                this.focusInput(); 
             },
     
             removeFromCart(index) {
                 this.cart.splice(index, 1);
-                this.focusInput(); // Fokus halten
+                this.focusInput(); 
             },
     
             get cartTotal() {
@@ -218,7 +231,6 @@
 
             startSumUpPayment() {
                 this.paymentMethod = 'SUMUP';
-                // Hier wird explizit mit 'SUMUP' Status gespeichert
                 this.saveState('SUMUP');
                 const total = this.cartTotal.toFixed(2);
                 const title = 'Kauf-' + new Date().getTime(); 
@@ -237,7 +249,10 @@
                             'Content-Type': 'application/json',
                             'X-CSRFToken': csrfToken
                         },
-                        body: JSON.stringify({ items: this.cart, payment_method: this.paymentMethod })
+                        body: JSON.stringify({ 
+                            items: this.cart,
+                            payment_method: this.paymentMethod 
+                        })
                     });
                     const result = await response.json();
                     if (result.success) {
@@ -268,7 +283,7 @@
                 this.createdPdfUrl = '';
                 this.searchQuery = '';
                 this.clearState();
-                this.focusInput(); // Bereit für nächsten Kunden
+                this.focusInput(); 
             }
         }
     }
@@ -277,34 +292,21 @@
 <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
 
 <style>
-    /* Scanner Styles */
+    /* Styles (gleich wie vorher, Scanner Styles werden nur bei Bedarf geladen) */
     #reader { width: 100%; border-radius: 8px; overflow: hidden; background: #000; min-height: 250px; }
     #reader video { object-fit: cover; border-radius: 8px; }
     .scanner-controls { background: #f8f9fa; padding: 10px; border-radius: 0 0 8px 8px; border: 1px solid #ddd; border-top: none; margin-bottom: 15px; }
-    
-    /* Layout */
+    .zoom-slider { width: 100%; }
     .pos-container { max-width: 1200px; margin: 0 auto; padding: 20px; }
     .search-box { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }
-    
-    /* Product List Dropdown */
     .product-list { list-style: none; padding: 0; margin: 0; max-height: 200px; overflow-y: auto; border: 1px solid #eee; display: none; }
     .product-list.active { display: block; }
     .product-list li { padding: 10px; border-bottom: 1px solid #eee; cursor: pointer; }
     .product-list li:hover { background-color: #f0f4f8; }
-    
-    /* Cart Table */
     .cart-table th { background-color: #343a40; color: #fff; }
-    
-    /* Modals */
     .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 9999; }
     .modal-box { background: white; border-radius: 8px; width: 90%; max-width: 500px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); overflow: hidden; animation: fadeIn 0.2s ease-out; }
-    
-    /* TOAST STYLES */
-    .toast-notification {
-        position: fixed; bottom: 20px; right: 20px; padding: 15px 25px; border-radius: 8px;
-        color: white; font-weight: bold; box-shadow: 0 4px 12px rgba(0,0,0,0.2); z-index: 10000;
-        display: flex; align-items: center; gap: 10px; animation: slideIn 0.3s ease-out; max-width: 90%;
-    }
+    .toast-notification { position: fixed; bottom: 20px; right: 20px; padding: 15px 25px; border-radius: 8px; color: white; font-weight: bold; box-shadow: 0 4px 12px rgba(0,0,0,0.2); z-index: 10000; display: flex; align-items: center; gap: 10px; animation: slideIn 0.3s ease-out; max-width: 90%; }
     .toast-success { background-color: #28a745; }
     .toast-error { background-color: #dc3545; }
     .toast-warning { background-color: #ffc107; color: #333; }
@@ -316,8 +318,8 @@
 {% block content %}
 <div class="pos-container" x-data="posApp()" x-init="init()">
     {% csrf_token %}
-
-    <!-- TOAST NOTIFICATION -->
+    
+    <!-- TOAST -->
     <div x-show="toast.show" class="toast-notification"
          :class="{ 'toast-success': toast.type === 'success', 'toast-error': toast.type === 'error', 'toast-warning': toast.type === 'warning' }"
          style="display: none;"
@@ -326,10 +328,12 @@
         <span x-text="toast.message"></span>
     </div>
 
-    <!-- CHECKOUT MODAL -->
+    <!-- CHECKOUT & SUCCESS MODALS (hier gekürzt dargestellt, sind identisch zu vorher) -->
+    <!-- (Bitte die Modals aus dem vorherigen Code-Block kopieren, die Logik ist 100% gleich) -->
     <div class="modal-overlay" x-show="showCheckoutModal" style="display: none;">
         <div class="modal-box" @click.away="showCheckoutModal = false">
-            <div class="modal-header bg-success text-white">
+            <!-- ... Modal Inhalt ... -->
+             <div class="modal-header bg-success text-white">
                 <h5 class="modal-title"><i class="fas fa-cash-register"></i> Bezahlung wählen</h5>
                 <button type="button" class="close text-white" @click="showCheckoutModal = false">&times;</button>
             </div>
@@ -352,11 +356,9 @@
             </div>
         </div>
     </div>
-
-    <!-- SUCCESS MODAL -->
     <div class="modal-overlay" x-show="showSuccessModal" style="display: none;">
         <div class="modal-box">
-            <div class="modal-header bg-primary text-white">
+             <div class="modal-header bg-primary text-white">
                 <h5 class="modal-title">Verkauf erfolgreich!</h5>
             </div>
             <div class="modal-body text-center p-4">
@@ -373,29 +375,34 @@
 
     <!-- MAIN UI -->
     <div class="row">
-        <!-- LINKS -->
         <div class="col-md-7">
-            <!-- Kamerabild -->
-            <div class="card mb-3 border-0 shadow-sm">
+            
+            <!-- KAMERA TOGGLE (NEU) -->
+            <div class="mb-3 text-right">
+                <button class="btn btn-outline-secondary btn-sm" @click="toggleCamera()">
+                    <i class="fas" :class="isCameraActive ? 'fa-times' : 'fa-camera'"></i> 
+                    <span x-text="isCameraActive ? 'Kamera schließen' : 'Kamera-Scanner nutzen'"></span>
+                </button>
+            </div>
+
+            <!-- SCANNER (Nur sichtbar wenn isCameraActive) -->
+            <div class="card mb-3 border-0 shadow-sm" x-show="isCameraActive" style="display: none;">
                 <div class="card-body p-0">
                     <div id="reader"></div>
-                    <div class="scanner-controls" x-show="showScannerControls" style="display: none;">
+                    <div class="scanner-controls" x-show="showScannerControls">
                         <div class="d-flex align-items-center">
                             <i class="fas fa-search-minus mr-2 text-muted"></i>
                             <input type="range" id="zoom-slider" class="zoom-slider custom-range" min="1" max="5" step="0.1" value="1">
                             <i class="fas fa-search-plus ml-2 text-muted"></i>
                         </div>
-                        <div class="text-center mt-1"><small class="text-muted">Zoom einstellen für Fokus</small></div>
                     </div>
                 </div>
             </div>
 
-            <!-- Suchfeld -->
             <div class="search-box">
-                <label for="search" class="h4 mb-3 d-block"><i class="fas fa-keyboard"></i> Manuelle Eingabe</label>
+                <label for="search" class="h4 mb-3 d-block"><i class="fas fa-barcode"></i> Produkt Scannen (Handheld)</label>
                 <div class="input-group input-group-lg">
-                    <!-- WICHTIG: autofocus und x-model -->
-                    <input type="text" id="search-input" class="form-control" placeholder="EAN scannen oder tippen..." 
+                    <input type="text" id="search-input" class="form-control" placeholder="EAN oder Name..." 
                            x-model="searchQuery" 
                            @keydown.enter.prevent="performSearch(true)" 
                            @input.debounce.300ms="performSearch(false)"
@@ -411,7 +418,12 @@
                             <div class="d-flex justify-content-between">
                                 <div>
                                     <strong x-text="product.name"></strong><br>
-                                    <small class="text-muted">EAN: <span x-text="product.ean"></span> | Lager: <span x-text="product.stock"></span></small>
+                                    <!-- NEU: Lager Anzeige dynamisch -->
+                                    <small class="text-muted">
+                                        EK: <span x-text="product.cost.toFixed(2)"></span> | 
+                                        <span x-show="product.track_stock !== false">Lager: <span x-text="product.stock"></span></span>
+                                        <span x-show="product.track_stock === false" class="badge badge-light">Kein Lager</span>
+                                    </small>
                                 </div>
                                 <div class="font-weight-bold text-primary"><span x-text="formatMoney(product.price)"></span></div>
                             </div>
@@ -422,8 +434,8 @@
             </div>
         </div>
 
-        <!-- RECHTS: Warenkorb -->
         <div class="col-md-5">
+            <!-- Warenkorb (wie gehabt) -->
             <div class="card shadow">
                 <div class="card-header bg-dark text-white">
                     <h4 class="m-0"><i class="fas fa-shopping-cart"></i> Warenkorb</h4>
@@ -459,7 +471,7 @@
                                 </template>
                                 <tr x-show="cart.length === 0">
                                     <td colspan="4" class="text-center py-4 text-muted">
-                                        Warenkorb leer. Bitte Produkte scannen.
+                                        Warenkorb leer. Scannen Sie Produkte.
                                     </td>
                                 </tr>
                             </tbody>

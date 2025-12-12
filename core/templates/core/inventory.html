@@ -13,7 +13,7 @@
             activeProduct: null, 
             // Eingabewert
             countedQty: '',
-            // NEU: Grund für die Korrektur
+            // Grund für die Korrektur
             correctionReason: '',
             
             // UI States
@@ -24,6 +24,7 @@
             
             // Scanner
             scanner: null,
+            isCameraActive: false, // NEU: Steuert Sichtbarkeit
             showScannerControls: false,
             scanCooldown: false,
 
@@ -31,12 +32,89 @@
             toast: { show: false, message: '', type: 'success' },
 
             init() {
-                this.startScanner();
+                // Kamera NICHT mehr automatisch starten
+                // Fokus auf Suchfeld setzen
                 this.$nextTick(() => this.focusSearch());
             },
 
+            // --- KAMERA TOGGLE LOGIK (NEU) ---
+            toggleCamera() {
+                if (this.isCameraActive) {
+                    this.stopCamera();
+                } else {
+                    this.startCameraScanner();
+                }
+            },
+
+            stopCamera() {
+                if (this.scanner) {
+                    this.scanner.stop().then(() => {
+                        this.isCameraActive = false;
+                        this.focusSearch();
+                    }).catch(err => console.log(err));
+                } else {
+                    this.isCameraActive = false;
+                }
+            },
+
+            startCameraScanner() {
+                this.isCameraActive = true;
+                
+                this.$nextTick(() => {
+                    const formats = [
+                        Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8,
+                        Html5QrcodeSupportedFormats.QR_CODE, Html5QrcodeSupportedFormats.CODE_128,
+                        Html5QrcodeSupportedFormats.UPC_A
+                    ];
+                    
+                    if (!this.scanner) {
+                        this.scanner = new Html5Qrcode("reader");
+                    }
+
+                    this.scanner.start(
+                        { facingMode: "environment" },
+                        { 
+                            fps: 15, 
+                            qrbox: { width: 280, height: 180 }, 
+                            aspectRatio: 1.0, 
+                            formatsToSupport: formats, 
+                            experimentalFeatures: { useBarCodeDetectorIfSupported: true } 
+                        },
+                        (decodedText) => {
+                            if (this.scanCooldown) return;
+                            if (this.searchQuery !== decodedText) {
+                                this.scanCooldown = true;
+                                this.searchQuery = decodedText;
+                                if (navigator.vibrate) navigator.vibrate(200);
+                                this.performSearch(true);
+                                setTimeout(() => { this.scanCooldown = false; }, 1500);
+                            }
+                        },
+                        (err) => {}
+                    ).then(() => {
+                        this.showScannerControls = true;
+                        this.setupZoom();
+                    }).catch(err => {
+                        console.log("Kamera Fehler:", err);
+                        this.isCameraActive = false;
+                        this.showNotification("Kamera konnte nicht gestartet werden.", "error");
+                    });
+                });
+            },
+
+            setupZoom() {
+                const slider = document.getElementById('zoom-slider');
+                if(slider) {
+                    slider.addEventListener('input', (e) => {
+                        try { this.scanner.applyVideoConstraints({ advanced: [{ zoom: parseFloat(e.target.value) }] }); } catch(e){}
+                    });
+                }
+            },
+            // ---------------------
+
             focusSearch() {
-                document.getElementById('search-input').focus();
+                const el = document.getElementById('search-input');
+                if(el) el.focus();
             },
             
             focusCount() {
@@ -53,49 +131,12 @@
                 setTimeout(() => { this.toast.show = false; }, 3000);
             },
 
-            // --- SCANNER LOGIC ---
-            startScanner() {
-                const formats = [
-                    Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8,
-                    Html5QrcodeSupportedFormats.QR_CODE, Html5QrcodeSupportedFormats.CODE_128,
-                    Html5QrcodeSupportedFormats.UPC_A
-                ];
-                if(this.scanner) return;
-
-                this.scanner = new Html5Qrcode("reader");
-                this.scanner.start(
-                    { facingMode: "environment" },
-                    { fps: 15, qrbox: { width: 280, height: 180 }, aspectRatio: 1.0, formatsToSupport: formats, experimentalFeatures: { useBarCodeDetectorIfSupported: true } },
-                    (decodedText) => {
-                        if (this.scanCooldown) return;
-                        if (this.searchQuery !== decodedText) {
-                            this.scanCooldown = true;
-                            this.searchQuery = decodedText;
-                            if (navigator.vibrate) navigator.vibrate(200);
-                            this.performSearch(true);
-                            setTimeout(() => { this.scanCooldown = false; }, 1500);
-                        }
-                    },
-                    (err) => {}
-                ).then(() => {
-                    this.showScannerControls = true;
-                    this.setupZoom();
-                }).catch(err => console.log("Kamera nicht verfügbar"));
-            },
-
-            setupZoom() {
-                const slider = document.getElementById('zoom-slider');
-                if(slider) {
-                    slider.addEventListener('input', (e) => {
-                        try { this.scanner.applyVideoConstraints({ advanced: [{ zoom: parseFloat(e.target.value) }] }); } catch(e){}
-                    });
-                }
-            },
-            // ---------------------
-
             async performSearch(isEnterPress) {
                 if (this.searchQuery.length < 2) return;
                 
+                // Falls Handscanner "Enter" sendet, Cooldown setzen
+                if (isEnterPress) this.scanCooldown = true;
+
                 // Wir nutzen die existierende Commerce API für die Suche
                 const res = await fetch(`/commerce/api/search/?q=${this.searchQuery}`);
                 const data = await res.json();
@@ -107,6 +148,7 @@
                      this.showNotification(`Produkt '${this.searchQuery}' nicht gefunden`, 'error');
                      this.searchQuery = '';
                      this.focusSearch();
+                     setTimeout(() => { this.scanCooldown = false; }, 1000);
                 }
 
                 // Auto-Select bei exaktem Treffer
@@ -124,8 +166,9 @@
                 }
                 
                 this.activeProduct = product;
+                // Standardmäßig füllen wir das Feld mit dem aktuellen Bestand
                 this.countedQty = product.stock; 
-                this.correctionReason = ''; // Reset Grund
+                this.correctionReason = ''; 
                 
                 this.searchQuery = '';
                 this.searchResults = [];
@@ -153,7 +196,6 @@
                         body: JSON.stringify({ 
                             product_id: this.activeProduct.id,
                             counted_qty: counted,
-                            // NEU: Grund mit übergeben
                             reason: this.correctionReason 
                         })
                     });
@@ -241,11 +283,20 @@
     <div class="row">
         <!-- LINKS: Scanner & Suche -->
         <div class="col-md-6">
-            <!-- SCANNER -->
-            <div class="card mb-3 border-0 shadow-sm">
+            
+            <!-- KAMERA TOGGLE BUTTON -->
+            <div class="mb-3 text-right">
+                <button class="btn btn-outline-secondary btn-sm" @click="toggleCamera()">
+                    <i class="fas" :class="isCameraActive ? 'fa-times' : 'fa-camera'"></i> 
+                    <span x-text="isCameraActive ? 'Kamera schließen' : 'Kamera-Scanner nutzen'"></span>
+                </button>
+            </div>
+
+            <!-- SCANNER (Nur sichtbar wenn Aktiv) -->
+            <div class="card mb-3 border-0 shadow-sm" x-show="isCameraActive" style="display: none;">
                 <div class="card-body p-0">
                     <div id="reader"></div>
-                    <div class="scanner-controls" x-show="showScannerControls" style="display: none;">
+                    <div class="scanner-controls" x-show="showScannerControls">
                         <div class="d-flex align-items-center">
                             <i class="fas fa-search-minus mr-2 text-muted"></i>
                             <input type="range" id="zoom-slider" class="zoom-slider custom-range" min="1" max="5" step="0.1" value="1">
@@ -257,8 +308,9 @@
 
             <!-- SEARCH -->
             <div class="search-box">
-                <label class="h5 mb-3 d-block">Produkt wählen</label>
+                <label class="h5 mb-3 d-block">Produkt wählen (Scan/Suche)</label>
                 <div class="input-group input-group-lg">
+                    <!-- WICHTIG: Autofokus für Handscanner -->
                     <input type="text" id="search-input" class="form-control" placeholder="EAN scannen..." 
                            x-model="searchQuery" 
                            @keydown.enter.prevent="performSearch(true)" 
@@ -292,18 +344,19 @@
             <!-- AKTIVES PRODUKT (Eingabemaske) -->
             <div class="count-box mb-4" x-show="activeProduct" x-transition>
                 <h4 class="text-muted mb-1">Gewähltes Produkt:</h4>
-                <h3 class="mb-3" x-text="activeProduct.name"></h3>
+                <h3 class="mb-3" x-text="activeProduct ? activeProduct.name : ''"></h3>
                 
                 <div class="row mb-4">
                     <div class="col-6 border-right">
                         <small class="text-uppercase text-muted">Soll-Bestand</small>
-                        <div class="h2 font-weight-bold text-primary" x-text="activeProduct.stock"></div>
+                        <div class="h2 font-weight-bold text-primary" x-text="activeProduct ? activeProduct.stock : 0"></div>
                     </div>
                     <div class="col-6">
                          <small class="text-uppercase text-muted">Differenz</small>
+                         <!-- Berechnung sicher machen für null-Werte -->
                          <div class="h2 font-weight-bold" 
-                              :class="{'diff-pos': (parseInt(countedQty) - activeProduct.stock) > 0, 'diff-neg': (parseInt(countedQty) - activeProduct.stock) < 0, 'diff-zero': (parseInt(countedQty) - activeProduct.stock) === 0}"
-                              x-text="(parseInt(countedQty) || 0) - activeProduct.stock">
+                              :class="{'diff-pos': (parseInt(countedQty || 0) - (activeProduct ? activeProduct.stock : 0)) > 0, 'diff-neg': (parseInt(countedQty || 0) - (activeProduct ? activeProduct.stock : 0)) < 0}"
+                              x-text="(parseInt(countedQty) || 0) - (activeProduct ? activeProduct.stock : 0)">
                          </div>
                     </div>
                 </div>
@@ -316,7 +369,7 @@
                            @keydown.enter.prevent="submitCorrection()">
                 </div>
 
-                <!-- NEU: Bemerkungsfeld -->
+                <!-- Bemerkungsfeld -->
                 <div class="form-group text-left mt-3">
                     <label>Bemerkung / Grund (Optional):</label>
                     <input type="text" class="form-control" 
