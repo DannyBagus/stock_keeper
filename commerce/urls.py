@@ -17,5 +17,6 @@ urlpatterns = [
     
     # PDF & Webhooks
     path('sale/<int:sale_id>/pdf/', views.sale_receipt_pdf_view, name='sale_pdf'),
+    path('mwst-report/', views.mwst_report_view, name='mwst_report'),
     path('webhooks/shopify/orders-paid/', views.shopify_webhook, name='shopify_webhook'),
 ]

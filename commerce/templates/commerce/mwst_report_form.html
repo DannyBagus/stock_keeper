@@ -1,0 +1,42 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block content %}
+<div class="col-12 col-md-8 offset-md-2">
+    <div class="card card-primary card-outline">
+        <div class="card-header">
+            <h3 class="card-title"><i class="fas fa-university mr-2"></i> MWST Abrechnungshilfe</h3>
+        </div>
+        <div class="card-body">
+            <div class="alert alert-info">
+                <i class="fas fa-info-circle"></i> Diese Auswertung gruppiert Umsätze und Vorsteuern nach den offiziellen Ziffern des Schweizer MWST-Formulars (ESTV).
+            </div>
+            
+            <form method="POST" target="_blank">
+                {% csrf_token %}
+                
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="form-group">
+                            <label for="{{ form.start_date.id_for_label }}">{{ form.start_date.label }}</label>
+                            {{ form.start_date }}
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="form-group">
+                            <label for="{{ form.end_date.id_for_label }}">{{ form.end_date.label }}</label>
+                            {{ form.end_date }}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mt-4">
+                    <button type="submit" class="btn btn-primary btn-lg btn-block">
+                        <i class="fas fa-file-invoice-dollar mr-2"></i> Abrechnung erstellen (PDF)
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -20,7 +20,7 @@ import json
 from .models import Product, Sale, SaleItem, PurchaseOrder, PurchaseOrderItem
 from core.models import Supplier
 from .utils import render_to_pdf
-from .forms import AccountingReportForm, EanLabelForm
+from .forms import AccountingReportForm, EanLabelForm, MwstReportForm
 from django.utils import timezone
 
 @staff_member_required
@@ -434,3 +434,127 @@ def ean_label_view(request):
         'title': 'Scan-Liste / Etiketten drucken'
     })
     return render(request, 'commerce/ean_label_form.html', context)
+
+
+@staff_member_required
+def mwst_report_view(request):
+    """
+    Generiert die MWST-Abrechnungshilfe (ESTV Konform).
+    """
+    if request.method == 'POST':
+        form = MwstReportForm(request.POST)
+        if form.is_valid():
+            start_date = form.cleaned_data['start_date']
+            end_date = form.cleaned_data['end_date']
+
+            # --- 1. UMSATZ (Sales) ---
+            # Wir holen alle SaleItems im Zeitraum
+            sale_items = SaleItem.objects.filter(
+                sale__date__date__gte=start_date,
+                sale__date__date__lte=end_date
+            )
+
+            # Speicher für die Ziffern
+            ziffer_200_total = Decimal('0.00') # Total Umsatz
+            
+            # Ziffer 303 (8.1%) und 302 (7.7% alt) - Normalsatz
+            norm_base = Decimal('0.00')
+            norm_tax = Decimal('0.00')
+            
+            # Ziffer 313 (2.6%) und 312 (2.5% alt) - Reduziert
+            red_base = Decimal('0.00')
+            red_tax = Decimal('0.00')
+            
+            # Ziffer 343 (3.8%) - Beherbergung (falls relevant)
+            spec_base = Decimal('0.00')
+            spec_tax = Decimal('0.00')
+
+            for item in sale_items:
+                # Brutto Total des Items
+                gross = item.total_price_gross
+                ziffer_200_total += gross
+                
+                rate = item.vat_rate or Decimal('0.00')
+                
+                # Rückrechnung Netto & Steuer
+                divisor = Decimal('1.00') + (rate / Decimal('100.00'))
+                net = gross / divisor
+                tax = gross - net
+
+                # Zuordnung zu den Ziffern basierend auf dem Satz
+                if rate >= Decimal('7.0'): # Normalsatz (8.1 oder 7.7)
+                    norm_base += net
+                    norm_tax += tax
+                elif rate >= Decimal('3.0'): # Sondersatz
+                    spec_base += net
+                    spec_tax += tax
+                elif rate > Decimal('0.0'): # Reduziert (2.6 oder 2.5)
+                    red_base += net
+                    red_tax += tax
+                # 0% wird ignoriert für Steuer, zählt aber zu Ziffer 200
+
+            # --- 2. VORSTEUER (Purchases) ---
+            # Nur empfangene Waren zählen als Vorsteuerabzug
+            purchase_items = PurchaseOrderItem.objects.filter(
+                order__date__gte=start_date,
+                order__date__lte=end_date,
+                order__status=PurchaseOrder.Status.RECEIVED
+            )
+
+            ziffer_400_vorsteuer = Decimal('0.00')
+
+            for p_item in purchase_items:
+                # Bei Purchase ist unit_price meist Netto (Einkaufspreis)
+                net = p_item.total_price
+                rate = p_item.vat_rate or Decimal('0.00')
+                
+                # Steuer berechnen (Netto * Satz)
+                tax_amt = net * (rate / Decimal('100.00'))
+                ziffer_400_vorsteuer += tax_amt
+
+            # --- 3. ABRECHNUNG ---
+            total_geschuldete_steuer = norm_tax + red_tax + spec_tax
+            ziffer_500_zahllast = total_geschuldete_steuer - ziffer_400_vorsteuer
+            
+            context = {
+                'start_date': start_date,
+                'end_date': end_date,
+                'generation_date': timezone.now(),
+                
+                # Werte
+                'ziffer_200': ziffer_200_total,
+                'ziffer_289': Decimal('0.00'), # Abzüge (optional)
+                'ziffer_299': ziffer_200_total, # Steuerbarer Gesamtumsatz
+                
+                'norm_base': norm_base,
+                'norm_tax': norm_tax,
+                
+                'red_base': red_base,
+                'red_tax': red_tax,
+                
+                'spec_base': spec_base,
+                'spec_tax': spec_tax,
+                
+                'total_output_tax': total_geschuldete_steuer,
+                
+                'ziffer_400': ziffer_400_vorsteuer,
+                'ziffer_500': ziffer_500_zahllast,
+            }
+
+            response = render_to_pdf('commerce/mwst_report_pdf.html', context)
+            if isinstance(response, HttpResponse) and response.status_code == 200:
+                filename = f"MWST_Abrechnung_{start_date}_{end_date}.pdf"
+                response['Content-Disposition'] = f'inline; filename="{filename}"'
+                return response
+            else:
+                return HttpResponse("Fehler beim Generieren des PDFs", status=500)
+
+    else:
+        form = MwstReportForm()
+
+    context = admin.site.each_context(request)
+    context.update({
+        'form': form,
+        'title': 'MWST Abrechnungshilfe (ESTV)'
+    })
+    return render(request, 'commerce/mwst_report_form.html', context)

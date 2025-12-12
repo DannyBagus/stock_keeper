@@ -73,3 +73,16 @@ class EanLabelForm(forms.Form):
         required=False,
         help_text="Wählen Sie die Kategorien, für die Sie eine Scan-Liste drucken möchten (z.B. 'Cafe', 'Gebäck')."
     )
+    
+# Formular für MwSt. Bericht
+class MwstReportForm(forms.Form):
+    start_date = forms.DateField(
+        label="Periode von",
+        widget=forms.DateInput(attrs={'type': 'date', 'class': 'form-control'}),
+        initial=timezone.now().date().replace(day=1) 
+    )
+    end_date = forms.DateField(
+        label="Periode bis",
+        widget=forms.DateInput(attrs={'type': 'date', 'class': 'form-control'}),
+        initial=timezone.now().date()
+    )

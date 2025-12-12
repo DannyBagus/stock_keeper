@@ -175,6 +175,7 @@ JAZZMIN_SETTINGS = {
             
             # 3. REPORTING (NEU)
             {"name": "Umsatzliste (PDF)", "url": "accounting_report", "icon": "fas fa-chart-line text-info", "permissions": ["auth.view_user"]},
+            {"name": "MWST Abrechnung", "url": "mwst_report", "icon": "fas fa-university text-info", "permissions": ["auth.view_user"]},
             {"name": "Scan-Liste (PDF)", "url": "ean_labels", "icon": "fas fa-barcode text-info", "permissions": ["auth.view_user"]},
         ],
         

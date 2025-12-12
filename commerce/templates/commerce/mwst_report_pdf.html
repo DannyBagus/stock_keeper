@@ -1,0 +1,138 @@
+{% load static %}
+<!DOCTYPE html>
+<html>
+<head>
+    <title>MWST Abrechnung</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 2cm;
+            @frame footer {
+                -pdf-frame-content: footer-content;
+                bottom: 0cm;
+                margin-left: 2cm;
+                margin-right: 2cm;
+                height: 1cm;
+            }
+        }
+        body { font-family: Helvetica, sans-serif; font-size: 10pt; color: #333; }
+        
+        /* HEADER */
+        .header-table { width: 100%; border: none; margin-bottom: 20px; }
+        .logo { font-size: 18pt; font-weight: bold; color: #aa8684; }
+        .meta { text-align: right; font-size: 9pt; }
+        
+        h1 { color: #aa8684; border-bottom: 2px solid #aa8684; padding-bottom: 5px; margin-top: 0; }
+        h3 { background-color: #eee; padding: 5px; margin-top: 20px; border-left: 5px solid #aa8684; }
+
+        /* FORMULAR TABELLE */
+        table.form-table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+        th { text-align: left; padding: 5px; font-weight: bold; background-color: #f9f9f9; border-bottom: 1px solid #ccc; }
+        td { padding: 5px; border-bottom: 1px solid #eee; vertical-align: top; }
+        
+        .ziffer { width: 10%; font-weight: bold; color: #555; }
+        .desc { width: 60%; }
+        .amount { width: 30%; text-align: right; font-family: monospace; font-size: 11pt; }
+        
+        .total-row td { border-top: 2px solid #333; font-weight: bold; background-color: #fff; }
+        .subtotal-row td { background-color: #fafafa; font-style: italic; }
+        
+        .highlight { color: #aa8684; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <!-- Header -->
+    <table class="header-table">
+        <tr>
+            <td class="logo">MWST-Abrechnungshilfe</td>
+            <td class="meta">
+                Mileja GmbH<br>
+                Periode: {{ start_date|date:"d.m.Y" }} - {{ end_date|date:"d.m.Y" }}
+            </td>
+        </tr>
+    </table>
+
+    <!-- I. UMSATZ -->
+    <h3>I. Umsatz (Total der Entgelte)</h3>
+    <table class="form-table">
+        <tr>
+            <td class="ziffer">200</td>
+            <td class="desc">Total der vereinbarten Entgelte (Brutto Umsatz)<br><small>inkl. MWST, Exporte und steuerbefreite Leistungen</small></td>
+            <td class="amount">{{ ziffer_200|floatformat:2 }}</td>
+        </tr>
+        <tr>
+            <td class="ziffer">289</td>
+            <td class="desc">Abzüge (steuerbefreit, Ausland, etc.)</td>
+            <td class="amount">- {{ ziffer_289|floatformat:2 }}</td>
+        </tr>
+        <tr class="total-row">
+            <td class="ziffer">299</td>
+            <td class="desc">Steuerbarer Gesamtumsatz</td>
+            <td class="amount">{{ ziffer_299|floatformat:2 }}</td>
+        </tr>
+    </table>
+
+    <!-- II. STEUERBERECHNUNG -->
+    <h3>II. Steuerberechnung (Umsatzsteuer)</h3>
+    <table class="form-table">
+        <tr>
+            <td class="ziffer">303</td>
+            <td class="desc">Leistungen zum Normalsatz (z.B. 8.1%)<br>
+                <small>Basis: {{ norm_base|floatformat:2 }} CHF</small>
+            </td>
+            <td class="amount">{{ norm_tax|floatformat:2 }}</td>
+        </tr>
+        <tr>
+            <td class="ziffer">313</td>
+            <td class="desc">Leistungen zum Reduzierten Satz (z.B. 2.6%)<br>
+                <small>Basis: {{ red_base|floatformat:2 }} CHF</small>
+            </td>
+            <td class="amount">{{ red_tax|floatformat:2 }}</td>
+        </tr>
+        {% if spec_base > 0 %}
+        <tr>
+            <td class="ziffer">343</td>
+            <td class="desc">Leistungen zum Sondersatz (z.B. 3.8%)<br>
+                <small>Basis: {{ spec_base|floatformat:2 }} CHF</small>
+            </td>
+            <td class="amount">{{ spec_tax|floatformat:2 }}</td>
+        </tr>
+        {% endif %}
+        <tr class="subtotal-row">
+            <td class="ziffer">399</td>
+            <td class="desc">Total geschuldete Steuer (Umsatzsteuer)</td>
+            <td class="amount">{{ total_output_tax|floatformat:2 }}</td>
+        </tr>
+    </table>
+
+    <!-- III. VORSTEUER -->
+    <h3>III. Vorsteuer & Zahllast</h3>
+    <table class="form-table">
+        <tr>
+            <td class="ziffer">400</td>
+            <td class="desc">Vorsteuer auf Material- und Dienstleistungsaufwand<br><small>Basierend auf verbuchten Wareneingängen (Purchase Orders)</small></td>
+            <td class="amount">{{ ziffer_400|floatformat:2 }}</td>
+        </tr>
+        <!-- Platzhalter für Investitionen, falls wir das später tracken -->
+        <tr>
+            <td class="ziffer">405</td>
+            <td class="desc">Vorsteuer auf Investitionen / Übriger Betriebsaufwand</td>
+            <td class="amount">0.00</td>
+        </tr>
+        <tr class="total-row">
+            <td class="ziffer highlight">500</td>
+            <td class="desc highlight">Zu bezahlender Betrag (Zahllast)<br><small>Ziff. 399 minus Ziff. 400/405</small></td>
+            <td class="amount highlight">{{ ziffer_500|floatformat:2 }}</td>
+        </tr>
+    </table>
+
+    <div id="footer-content">
+        <p style="text-align: center; font-size: 8pt; color: #888;">
+            Generiert am {{ generation_date|date:"d.m.Y H:i" }} | Stock Keeper<br>
+            Dies ist ein internes Dokument zur Unterstützung der offiziellen Deklaration.
+        </p>
+    </div>
+
+</body>
+</html>
