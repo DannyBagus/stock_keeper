@@ -106,6 +106,7 @@ def api_inventory_correct(request):
         data = json.loads(request.body)
         product_id = data.get('product_id')
         counted_qty = data.get('counted_qty')
+        reason = data.get('reason', 'Inventur / Stock Take') # <--- NEU: Grund auslesen
         
         if product_id is None or counted_qty is None:
             return JsonResponse({'error': 'Fehlende Daten'}, status=400)
@@ -125,7 +126,7 @@ def api_inventory_correct(request):
                 quantity=diff,
                 movement_type=StockMovement.Type.CORRECTION,
                 user=request.user,
-                notes="Inventur / Stock Take"
+                notes=reason
             )
             
         return JsonResponse({

@@ -13,6 +13,8 @@
             activeProduct: null, 
             // Eingabewert
             countedQty: '',
+            // NEU: Grund für die Korrektur
+            correctionReason: '',
             
             // UI States
             searchResults: [],
@@ -122,9 +124,8 @@
                 }
                 
                 this.activeProduct = product;
-                // Standardmäßig füllen wir das Feld mit dem aktuellen Bestand, 
-                // damit man bei kleinen Abweichungen nur +/- machen muss, oder überschreiben kann.
                 this.countedQty = product.stock; 
+                this.correctionReason = ''; // Reset Grund
                 
                 this.searchQuery = '';
                 this.searchResults = [];
@@ -151,7 +152,9 @@
                         headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
                         body: JSON.stringify({ 
                             product_id: this.activeProduct.id,
-                            counted_qty: counted 
+                            counted_qty: counted,
+                            // NEU: Grund mit übergeben
+                            reason: this.correctionReason 
                         })
                     });
                     
@@ -310,6 +313,15 @@
                     <input type="number" id="count-input" class="form-control form-control-lg text-center font-weight-bold" 
                            style="font-size: 2rem; height: 70px;"
                            x-model="countedQty" 
+                           @keydown.enter.prevent="submitCorrection()">
+                </div>
+
+                <!-- NEU: Bemerkungsfeld -->
+                <div class="form-group text-left mt-3">
+                    <label>Bemerkung / Grund (Optional):</label>
+                    <input type="text" class="form-control" 
+                           placeholder="z.B. Inventur 2025, Bruch, Eigenverbrauch..."
+                           x-model="correctionReason"
                            @keydown.enter.prevent="submitCorrection()">
                 </div>
 
