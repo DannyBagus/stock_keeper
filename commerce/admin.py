@@ -30,20 +30,15 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
     actions = ['action_mark_as_received', 'action_generate_pdf']
     inlines = [PurchaseOrderItemInline]
     
-    # NEU: 'created_by' zur Liste hinzugefügt
     list_display = ('id', 'supplier', 'date', 'status', 'total_items_count', 'created_by', 'is_booked')
     list_filter = ('status', 'date', 'is_booked', 'created_by')
 
-    # 1. Felder konfigurieren
     def get_fields(self, request, obj=None):
         if obj is None:
-            # Initial: Nur Supplier und Datum
             return ('supplier', 'date')
         else:
-            # Bearbeiten: Alle Felder
             return ('supplier', 'date', 'status', 'created_by', 'invoice_document', 'is_booked')
 
-    # 2. Automatische Felder setzen
     def save_model(self, request, obj, form, change):
         if not obj.pk:
             obj.created_by = request.user
@@ -51,18 +46,11 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
             obj.is_booked = False
         super().save_model(request, obj, form, change)
 
-    # 3. Readonly Logik (KORRIGIERT)
     def get_readonly_fields(self, request, obj=None):
         if obj:
-            # FIX: 'is_booked' wurde hier entfernt, damit es immer editierbar bleibt!
-            
-            # Status sperren wenn finalisiert
             if obj.status in [PurchaseOrder.Status.RECEIVED, PurchaseOrder.Status.CANCELLED]:
                 return ('status', 'created_by') 
-            
-            # Im normalen Edit-Modus ist nur der Ersteller fix
             return ('created_by',)
-            
         return ()
 
     def total_items_count(self, obj):
@@ -95,14 +83,12 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
         else:
             return response
 
-# --- Sale Admin (MIT STORNO) ---
+# --- Sale Admin ---
 
 @admin.register(Sale)
 class SaleAdmin(admin.ModelAdmin):
-    # NEU: Refund Action hinzufügen
     actions = ['action_generate_receipt', 'action_refund_sale'] 
     
-    # NEU: Status anzeigen
     list_display = ('id', 'date', 'total_amount_gross', 'payment_method', 'channel', 'status', 'created_by')
     list_filter = ('date', 'payment_method', 'channel', 'status', 'created_by')
     inlines = [SaleItemInline] 
@@ -131,17 +117,31 @@ class SaleAdmin(admin.ModelAdmin):
         else:
             return response
 
-    # NEU: Die Storno-Action
+    # NEU: Die Storno-Action mit intelligenter Info-Ausgabe
     @admin.action(description='Verkauf stornieren / Ware retournieren')
     def action_refund_sale(self, request, queryset):
         count = 0
+        refund_instructions = []
+        
         for sale in queryset:
             # Nur stornieren, wenn noch nicht storniert
             if sale.status != Sale.Status.REFUNDED:
                 sale.refund(user=request.user)
                 count += 1
+                
+                # Spezifische Hinweise je nach Zahlungsmethode generieren
+                if sale.payment_method == Sale.PaymentMethod.SUMUP:
+                    # Bei SumUp haben wir keine ID, daher Hinweis auf manuelle Suche via Betrag/Zeit
+                    refund_instructions.append(f"SumUp (Sale #{sale.id}, {sale.total_amount_gross} CHF)")
+                elif sale.transaction_id:
+                    # Bei Shopify (oder anderen) haben wir eine ID
+                    refund_instructions.append(f"Ext. Ref: {sale.transaction_id}")
         
         if count > 0:
-            self.message_user(request, f"{count} Verkäufe erfolgreich storniert. Ware wurde zurückgebucht.", messages.SUCCESS)
+            msg = f"{count} Verkäufe erfolgreich storniert. Ware wurde zurückgebucht."
+            if refund_instructions:
+                msg += f" WICHTIG: Bitte folgende Rückerstattungen manuell im Zahlungsanbieter (App/Portal) vornehmen: {', '.join(refund_instructions)}"
+            
+            self.message_user(request, msg, messages.SUCCESS)
         else:
             self.message_user(request, "Keine stornierbaren Verkäufe ausgewählt.", messages.WARNING)
