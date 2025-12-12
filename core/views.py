@@ -3,14 +3,17 @@ from django.contrib import admin
 from django.contrib.admin.views.decorators import staff_member_required
 from django.contrib import messages
 from django.db import transaction
-from django.db.models import Sum, Count
-from django.db.models.functions import TruncMonth
+from django.db.models import Sum, Count, F, ExpressionWrapper, DecimalField, OuterRef, Subquery
+from django.db.models.functions import TruncMonth, Coalesce
 from django.utils import timezone
 from django.views.decorators.http import require_POST
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponse
+from decimal import Decimal
 import json
 from .models import Product, Category, StockMovement
+from .forms import InventoryReportForm
 from commerce.models import Sale, PurchaseOrder
+from commerce.utils import render_to_pdf 
 
 @staff_member_required
 def scanner_view(request):
@@ -141,3 +144,73 @@ def api_inventory_correct(request):
         return JsonResponse({'error': 'Produkt nicht gefunden'}, status=404)
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
+    
+
+# Inventarliste Report
+@staff_member_required
+def inventory_report_view(request):
+    if request.method == 'POST':
+        form = InventoryReportForm(request.POST)
+        if form.is_valid():
+            report_date = form.cleaned_data['date']
+            categories = form.cleaned_data['categories']
+            only_positive = form.cleaned_data['only_positive']
+            
+            # Basis-Query
+            products = Product.objects.filter(track_stock=True)
+            
+            if categories:
+                products = products.filter(category__in=categories)
+            
+            # LOGIK-WECHSEL: Historischen Bestand berechnen
+            # Wir suchen für jedes Produkt die letzte Bewegung, die <= dem Stichtag war.
+            # Der Wert 'stock_after' dieser Bewegung war der Bestand an jenem Abend.
+            latest_movement = StockMovement.objects.filter(
+                product=OuterRef('pk'),
+                created_at__date__lte=report_date
+            ).order_by('-created_at', '-id').values('stock_after')[:1]
+
+            products = products.annotate(
+                # Coalesce wandelt None (keine Bewegung gefunden) in 0 um
+                calculated_stock=Coalesce(Subquery(latest_movement), 0)
+            )
+            
+            # Filterung basierend auf dem HISTORISCHEN Bestand
+            if only_positive:
+                products = products.filter(calculated_stock__gt=0)
+                
+            # Berechnung des Lagerwerts (Menge * Einkaufspreis)
+            products = products.annotate(
+                total_value=ExpressionWrapper(
+                    F('calculated_stock') * F('cost_price'),
+                    output_field=DecimalField()
+                )
+            ).order_by('category__name', 'name')
+            
+            # Gesamtsumme berechnen
+            total_inventory_value = products.aggregate(Sum('total_value'))['total_value__sum'] or Decimal('0.00')
+            
+            context = {
+                'product_list': products,
+                'report_date': report_date,
+                'generation_date': timezone.now(),
+                'total_inventory_value': total_inventory_value,
+                'categories': ", ".join([c.name for c in categories]) if categories else "Alle"
+            }
+            
+            response = render_to_pdf('core/inventory_report_pdf.html', context)
+            if isinstance(response, HttpResponse) and response.status_code == 200:
+                filename = f"Inventarliste_{report_date}.pdf"
+                response['Content-Disposition'] = f'inline; filename="{filename}"'
+                return response
+            else:
+                return HttpResponse("Fehler beim Generieren des PDFs", status=500)
+    else:
+        form = InventoryReportForm()
+        
+    context = admin.site.each_context(request)
+    context.update({
+        'form': form,
+        'title': 'Inventarliste (Bilanz)'
+    })
+    return render(request, 'core/inventory_report_form.html', context)

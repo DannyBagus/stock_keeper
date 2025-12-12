@@ -1,0 +1,92 @@
+{% load static %}
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Inventarliste</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 2cm;
+            @frame footer {
+                -pdf-frame-content: footer-content;
+                bottom: 0cm;
+                margin-left: 2cm;
+                margin-right: 2cm;
+                height: 1cm;
+            }
+        }
+        body { font-family: Helvetica, sans-serif; font-size: 10pt; color: #333; }
+        
+        .header-table { width: 100%; border: none; margin-bottom: 20px; }
+        .logo-cell { width: 50%; font-size: 18pt; font-weight: bold; color: #aa8684; vertical-align: top; }
+        .meta-cell { width: 50%; text-align: right; font-size: 9pt; color: #555; vertical-align: top; }
+        
+        h1 { color: #aa8684; border-bottom: 2px solid #aa8684; padding-bottom: 5px; margin-top: 0; }
+        
+        /* Tabelle */
+        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 9pt; }
+        th { text-align: left; padding: 4px; font-weight: bold; background-color: #f9f9f9; border-bottom: 1px solid #aa8684; color: #aa8684; }
+        td { padding: 4px; border-bottom: 1px solid #eee; vertical-align: top; }
+        
+        .num { text-align: right; }
+        .total-row td { font-weight: bold; border-top: 1px solid #333; border-bottom: 3px double #333; padding-top: 5px; font-size: 10pt; }
+    </style>
+</head>
+<body>
+
+    <!-- Header -->
+    <table class="header-table">
+        <tr>
+            <td class="logo-cell">SupportElle</td>
+            <td class="meta-cell">
+                Inventarliste (Warenvorräte)<br>
+                Stichtag: {{ report_date|date:"d.m.Y" }}<br>
+                Erstellt: {{ generation_date|date:"d.m.Y H:i" }}
+            </td>
+        </tr>
+    </table>
+
+    <p style="font-size: 9pt; color: #666; margin-bottom: 15px;">
+        Kategorien: {{ categories }} | Bewertung: Einstandspreis (Cost Price)
+    </p>
+
+    <table>
+        <thead>
+            <tr>
+                <th width="10%">Art. Nr.</th>
+                <th width="40%">Bezeichnung</th>
+                <th width="10%">Menge</th>
+                <th width="10%">Einh.</th>
+                <th width="15%" class="num">EP (CHF)</th>
+                <th width="15%" class="num">Wert (CHF)</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for p in product_list %}
+            <tr>
+                <td>{{ p.sku|default:p.ean }}</td>
+                <td>{{ p.name }}</td>
+                <!-- FIX: calculated_stock statt stock_quantity für historischen Wert -->
+                <td class="num">{{ p.calculated_stock }}</td>
+                <td>{{ p.get_unit_display }}</td>
+                <td class="num">{{ p.cost_price|floatformat:2 }}</td>
+                <td class="num">{{ p.total_value|floatformat:2 }}</td>
+            </tr>
+            {% endfor %}
+            
+            <tr class="total-row">
+                <td colspan="5" class="num">GESAMTWERT LAGERBESTAND</td>
+                <td class="num">{{ total_inventory_value|floatformat:2 }}</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <div id="footer-content">
+        <hr style="color: #ddd; height: 1px; border: 0;">
+        <p style="text-align: center; font-size: 8pt; color: #aa8684;">
+            Inventarliste für Bilanzzwecke - Mileja GmbH | Seite <pdf:pagenumber> von <pdf:pagecount></pdf:pagecount></pdf:pagenumber>
+        </p>
+    </div>
+
+</body>
+</html>

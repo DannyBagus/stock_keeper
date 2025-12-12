@@ -184,7 +184,10 @@ JAZZMIN_SETTINGS = {
             {"name": "Lagerverwaltung", "url": "/core/scanner/", "icon": "fas fa-qrcode text-warning", "permissions": ["auth.view_user"]},
             {"name": "Inventur / Zählung", "url": "/core/inventory/", "icon": "fas fa-clipboard-check text-warning", "permissions": ["auth.view_user"]},
             
-            # 2. STAMMDATEN
+            # 2. REPORTING (NEU)
+            {"name": "Inventarliste (Bilanz)", "url": "inventory_report", "icon": "fas fa-file-invoice-dollar text-info", "permissions": ["auth.view_user"]},
+            
+            # 3. STAMMDATEN
             {"name": "Produkte", "url": "admin:core_product_changelist", "icon": "fas fa-box-open", "permissions": ["core.view_product"]},
             {"name": "Kategorien", "url": "admin:core_category_changelist", "icon": "fas fa-tags", "permissions": ["core.view_category"]},
             {"name": "Lieferanten", "url": "admin:core_supplier_changelist", "icon": "fas fa-truck", "permissions": ["core.view_supplier"]},

@@ -1,0 +1,49 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block content %}
+<div class="col-12 col-md-8 offset-md-2">
+    <div class="card card-primary card-outline">
+        <div class="card-header">
+            <h3 class="card-title"><i class="fas fa-boxes mr-2"></i> Inventarliste (Bewertet)</h3>
+        </div>
+        <div class="card-body">
+            <p class="text-muted">
+                Erstellen Sie eine bewertete Inventarliste für den Jahresabschluss. 
+                Die Liste zeigt den aktuellen Bestand multipliziert mit dem Einkaufspreis.
+            </p>
+            
+            <form method="POST" target="_blank">
+                {% csrf_token %}
+                
+                <div class="form-group">
+                    <label for="{{ form.date.id_for_label }}">{{ form.date.label }}</label>
+                    {{ form.date }}
+                    <small class="form-text text-muted">{{ form.date.help_text }}</small>
+                </div>
+
+                <div class="form-group mt-3">
+                    <div class="custom-control custom-checkbox">
+                        {{ form.only_positive }}
+                        <label class="custom-control-label" for="{{ form.only_positive.id_for_label }}">
+                            {{ form.only_positive.label }}
+                        </label>
+                    </div>
+                </div>
+
+                <div class="form-group mt-3">
+                    <label for="{{ form.categories.id_for_label }}">{{ form.categories.label }}</label>
+                    {{ form.categories }}
+                    <small class="form-text text-muted">Halten Sie Strg (Windows) oder Cmd (Mac) gedrückt, um mehrere Kategorien zu wählen.</small>
+                </div>
+
+                <div class="mt-4">
+                    <button type="submit" class="btn btn-primary btn-lg btn-block">
+                        <i class="fas fa-print mr-2"></i> Inventarliste drucken (PDF)
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

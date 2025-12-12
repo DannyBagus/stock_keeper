@@ -2,12 +2,13 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
-    # Bestehender Scanner (kann evtl. entfernt werden, wenn Inventory besser ist)
+    # Tools
     path('scanner/', views.scanner_view, name='scanner'),
-    
-    # NEU: Inventur UI
     path('inventory/', views.inventory_view, name='inventory'),
     
-    # NEU: API für Korrektur
+    # Reports
+    path('inventory-report/', views.inventory_report_view, name='inventory_report'), 
+
+    # API
     path('api/inventory-correct/', views.api_inventory_correct, name='api_inventory_correct'),
 ]
