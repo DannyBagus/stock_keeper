@@ -95,24 +95,23 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
         else:
             return response
 
-# --- Sale Admin ---
+# --- Sale Admin (MIT STORNO) ---
 
 @admin.register(Sale)
 class SaleAdmin(admin.ModelAdmin):
-    actions = ['action_generate_receipt'] 
+    # NEU: Refund Action hinzufügen
+    actions = ['action_generate_receipt', 'action_refund_sale'] 
     
-    # NEU: 'created_by' zur Liste hinzugefügt
-    list_display = ('id', 'date', 'total_amount_gross', 'payment_method', 'created_by')
-    list_filter = ('date', 'payment_method', 'created_by')
+    # NEU: Status anzeigen
+    list_display = ('id', 'date', 'total_amount_gross', 'payment_method', 'channel', 'status', 'created_by')
+    list_filter = ('date', 'payment_method', 'channel', 'status', 'created_by')
     inlines = [SaleItemInline] 
-    # NEU: 'created_by' hier anzeigen
-    readonly_fields = ('total_amount_net', 'total_amount_gross', 'transaction_id', 'created_by')
+    readonly_fields = ('total_amount_net', 'total_amount_gross', 'transaction_id', 'created_by', 'channel', 'status')
     
     def save_related(self, request, form, formsets, change):
         super().save_related(request, form, formsets, change)
         form.instance.calculate_totals()
 
-    # NEU: save_model implementiert, um den User beim manuellen Erstellen zu setzen
     def save_model(self, request, obj, form, change):
         if not obj.pk:
             obj.created_by = request.user
@@ -131,3 +130,18 @@ class SaleAdmin(admin.ModelAdmin):
             return response
         else:
             return response
+
+    # NEU: Die Storno-Action
+    @admin.action(description='Verkauf stornieren / Ware retournieren')
+    def action_refund_sale(self, request, queryset):
+        count = 0
+        for sale in queryset:
+            # Nur stornieren, wenn noch nicht storniert
+            if sale.status != Sale.Status.REFUNDED:
+                sale.refund(user=request.user)
+                count += 1
+        
+        if count > 0:
+            self.message_user(request, f"{count} Verkäufe erfolgreich storniert. Ware wurde zurückgebucht.", messages.SUCCESS)
+        else:
+            self.message_user(request, "Keine stornierbaren Verkäufe ausgewählt.", messages.WARNING)

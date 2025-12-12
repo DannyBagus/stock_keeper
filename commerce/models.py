@@ -102,6 +102,11 @@ class Sale(models.Model):
     date = models.DateTimeField(default=timezone.now)
     total_amount_net = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     total_amount_gross = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    
+    # Verkaufsstatus
+    class Status(models.TextChoices):
+        COMPLETED = 'COMPLETED', 'Abgeschlossen'
+        REFUNDED = 'REFUNDED', 'Storniert / Retourniert'
 
     # Zahlungsarten (Wie fließt das Geld?)
     class PaymentMethod(models.TextChoices):
@@ -126,6 +131,8 @@ class Sale(models.Model):
         help_text="Über welchen Kanal wurde dieser Verkauf getätigt?"
     )
     
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.COMPLETED)
+    
     # Optional: User für Audit Log
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
 
@@ -136,6 +143,30 @@ class Sale(models.Model):
         total_gross = sum(item.total_price_gross for item in self.items.all())
         self.total_amount_gross = total_gross
         self.save()
+
+    @transaction.atomic
+    def refund(self, user=None):
+        """
+        Storniert den Verkauf und bucht die Ware zurück ins Lager.
+        """
+        if self.status == self.Status.REFUNDED:
+            return # Bereits storniert
+        
+        # 1. Status ändern
+        self.status = self.Status.REFUNDED
+        self.save()
+        
+        # 2. Ware zurückbuchen
+        for item in self.items.all():
+            # Wir nutzen adjust_stock mit positiver Quantity (Rückbuchung)
+            # und dem Typ RETURN
+            item.product.adjust_stock(
+                quantity=item.quantity, # Positiv = Eingang
+                movement_type=StockMovement.Type.RETURN,
+                user=user or self.created_by,
+                reference=self,
+                notes=f"Storno Verkauf #{self.id}"
+            )
 
 class SaleItem(models.Model):
     sale = models.ForeignKey(Sale, related_name='items', on_delete=models.CASCADE)
