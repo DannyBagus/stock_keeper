@@ -158,6 +158,37 @@ class Product(models.Model):
         super().save(*args, **kwargs)
 
     @transaction.atomic
+    def update_moving_average_price(self, incoming_qty, incoming_price):
+        """
+        Berechnet den gleitenden Durchschnittspreis (Moving Average Price) neu.
+        Wird bei Wareneingängen aufgerufen.
+        Formel: ((Alter Bestand * Alter Preis) + (Neuer Eingang * Neuer Preis)) / Neuer Gesamtbestand
+        """
+        if incoming_qty <= 0:
+            return
+
+        # Sicherstellen, dass wir mit Decimals rechnen
+        incoming_price = Decimal(incoming_price)
+        current_stock = Decimal(self.stock_quantity)
+        current_cost = self.cost_price or Decimal('0.00')
+
+        # Fall 1: Lager war leer oder negativ -> Preis ist einfach der neue Preis
+        if current_stock <= 0:
+            new_cost_price = incoming_price
+        
+        # Fall 2: Lager hat Bestand -> Mischpreis berechnen
+        else:
+            current_value = current_stock * current_cost
+            incoming_value = Decimal(incoming_qty) * incoming_price
+            total_qty = current_stock + Decimal(incoming_qty)
+            
+            new_cost_price = (current_value + incoming_value) / total_qty
+
+        # Runden auf 2 Stellen (Schweizer Standard)
+        self.cost_price = new_cost_price.quantize(Decimal('0.01'))
+        self.save()
+
+    @transaction.atomic
     def adjust_stock(self, quantity, movement_type, user=None, reference=None, notes=""):
         if not self.track_stock:
             return None

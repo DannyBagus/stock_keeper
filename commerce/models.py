@@ -29,49 +29,48 @@ class PurchaseOrder(models.Model):
 
     @transaction.atomic
     def save(self, *args, **kwargs):
-        # Wir prüfen, ob sich der Status auf RECEIVED geändert hat
         should_book_stock = False
         
-        if self.pk: # Nur bei existierenden Objekten prüfen
+        if self.pk: 
             try:
                 old_obj = PurchaseOrder.objects.get(pk=self.pk)
-                # Wenn der alte Status NICHT Received war, der neue aber SCHON
                 if old_obj.status != self.Status.RECEIVED and self.status == self.Status.RECEIVED:
                     should_book_stock = True
             except PurchaseOrder.DoesNotExist:
                 pass
 
-        # Zuerst speichern, damit der Status in der DB ist
         super().save(*args, **kwargs)
 
-        # Wenn Statuswechsel erkannt wurde, Bestand buchen
         if should_book_stock:
             self._process_stock_arrival()
 
     def _process_stock_arrival(self):
         """
         Interne Hilfsmethode: Bucht den Bestand via adjust_stock (Audit Log).
+        Aktualisiert VORHER den Durchschnittspreis (Moving Average).
         """
         for item in self.items.all():
-            # Hier nutzen wir die adjust_stock Methode vom Produkt!
-            # Das erstellt automatisch den StockMovement Eintrag.
-            item.product.adjust_stock(
+            product = item.product
+            
+            # 1. Durchschnittspreis aktualisieren (bevor der Bestand erhöht wird!)
+            # Wir nutzen den Preis aus der Bestellung (unit_price)
+            if item.unit_price and item.unit_price > 0:
+                product.update_moving_average_price(item.quantity, item.unit_price)
+
+            # 2. Bestand erhöhen & Audit Log schreiben
+            product.adjust_stock(
                 quantity=item.quantity,
                 movement_type=StockMovement.Type.PURCHASE,
                 user=self.created_by,
-                reference=self, # Verknüpfung zur PurchaseOrder für das Audit-Log
+                reference=self, 
                 notes=f"Wareneingang Bestellung #{self.id}"
             )
 
     @transaction.atomic
     def mark_as_received(self):
-        """
-        Kann von Actions oder API aufgerufen werden.
-        Da die Logik jetzt in save() ist, setzen wir nur den Status.
-        """
         if self.status != self.Status.RECEIVED:
             self.status = self.Status.RECEIVED
-            self.save() # Dies triggert nun automatisch die Bestandsbuchung
+            self.save() 
 
 class PurchaseOrderItem(models.Model):
     order = models.ForeignKey(PurchaseOrder, related_name='items', on_delete=models.CASCADE)
