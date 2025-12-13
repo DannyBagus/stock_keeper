@@ -13,7 +13,10 @@
             scanner: null, isCameraActive: false, showScannerControls: false, scanCooldown: false,
             createdSaleId: null, createdPdfUrl: '',
             toast: { show: false, message: '', type: 'success' },
-            paymentMethod: 'CASH', sumUpAffiliateKey: 'sup_afk_fhpRcEDdXRZouibkztggzW5qwt3DbL4a',
+            paymentMethod: 'CASH', 
+            
+            // HIER: Der Key ist jetzt fest im Code hinterlegt (keine Env-Variable nötig)
+            sumUpAffiliateKey: 'sup_afk_fhpRcEDdXRZouibkztggzW5qwt3DbL4a',
 
             init() {
                 this.restoreState();
@@ -90,12 +93,9 @@
             },
             removeFromCart(index) { this.cart.splice(index, 1); this.focusSearch(); },
             get cartTotal() { return this.cart.reduce((sum, item) => sum + (item.price * item.qty), 0); },
-            get cartTotalDisplay() { return this.formatMoney(this.cartTotal); },
+            get cartTotalDisplay() { return parseFloat(this.cartTotal).toFixed(2) + ' CHF'; },
             
-            // --- HELPER ---
-            formatMoney(amount) {
-                return parseFloat(amount).toFixed(2) + ' CHF';
-            },
+            formatMoney(amount) { return parseFloat(amount).toFixed(2) + ' CHF'; },
 
             // --- STATE & CHECKOUT ---
             saveState(method) { try { localStorage.setItem('pos_cart', JSON.stringify(this.cart)); localStorage.setItem('pos_payment_method', method || 'CASH'); localStorage.setItem('pos_active', 'true'); } catch(e){} },
@@ -113,12 +113,21 @@
                 }
             },
             initiateCheckout() { if (this.cart.length === 0) return; this.paymentMethod = 'CASH'; this.showCheckoutModal = true; },
+            
             startSumUpPayment() {
-                this.paymentMethod = 'SUMUP'; this.saveState('SUMUP');
+                this.paymentMethod = 'SUMUP'; 
+                this.saveState('SUMUP'); // Status speichern bevor wir gehen
+
                 const total = this.cartTotal.toFixed(2);
-                const title = 'Kauf-' + new Date().getTime(); const currency = 'CHF';
-                window.location.href = `sumupmerchant://pay/1.0?affiliate-key=${this.sumUpAffiliateKey}&app-id=ch.stockkeeper.app&total=${total}&currency=${currency}&title=${title}&skip-screen-success=true`;
+                const title = 'SupportElle-' + new Date().getTime(); 
+                const currency = 'CHF';
+                
+                // URL Scheme bauen (Key ist jetzt hardcoded verfügbar)
+                const url = `sumupmerchant://pay/1.0?affiliate-key=${this.sumUpAffiliateKey}&app-id=stock-keeper.raowy.ch&total=${total}&currency=${currency}&title=${title}&skip-screen-success=true`;
+                
+                window.location.href = url;
             },
+
             async confirmCheckout() {
                 this.isLoading = true;
                 try {
@@ -345,3 +354,5 @@
     </div>
 </div>
 {% endblock %}
+
+
