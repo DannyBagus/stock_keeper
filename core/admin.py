@@ -45,15 +45,13 @@ class StockMovementInline(admin.TabularInline):
     source_link.short_description = "Beleg / Ursprung"
 
 
+             
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
-    # KORREKTUR: Wir nutzen 'display_name' statt 'name'
     list_display = ('display_name', 'sku', 'stock_quantity', 'track_stock', 'unit', 'sales_price', 'category', 'supplier')
     list_filter = ('category', 'supplier', 'unit', 'is_active', 'track_stock')
     search_fields = ('name', 'sku', 'ean', 'description')
-    
     list_editable = ('sales_price',) 
-    
     inlines = [StockMovementInline]
     
     fieldsets = (
@@ -75,6 +73,14 @@ class ProductAdmin(admin.ModelAdmin):
     @admin.display(description='Produktbezeichnung', ordering='name')
     def display_name(self, obj):
         return str(obj)
+
+    # Diese Methode sorgt für das Pre-Filling via URL-Parameter
+    def get_changeform_initial_data(self, request):
+        initial = super().get_changeform_initial_data(request)
+        # Wenn 'ean' in der URL ist, fügen wir es zu den Initial-Daten hinzu
+        if 'ean' in request.GET:
+            initial['ean'] = request.GET.get('ean')
+        return initial
 
     def save_model(self, request, obj, form, change):
         """

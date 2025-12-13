@@ -54,8 +54,15 @@
                 const data = await res.json();
                 this.searchResults = data.results;
                 this.noResults = this.searchResults.length === 0;
+                
                 if (isEnterPress && this.searchResults.length === 1) this.openProduct(this.searchResults[0]);
-                if (isEnterPress && this.noResults) { setTimeout(() => { this.scanCooldown = false; }, 1000); this.searchQuery = ''; this.focusSearch(); }
+                
+                if (isEnterPress && this.noResults) { 
+                    setTimeout(() => { this.scanCooldown = false; }, 1000); 
+                    // Wir leeren das Feld NICHT, damit der User den Code für den "Anlegen"-Button sieht
+                    // this.searchQuery = ''; 
+                    this.focusSearch(); 
+                }
             },
             openProduct(product) { window.location.href = `/admin/core/product/${product.id}/change/`; }
         }
@@ -68,7 +75,7 @@
     #reader video { object-fit: cover; border-radius: 8px; }
     .scanner-controls { background: #f8f9fa; padding: 10px; border-radius: 0 0 8px 8px; border: 1px solid #ddd; border-top: none; margin-bottom: 15px; }
     .zoom-slider { width: 100%; }
-    .search-box { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; border-left: 4px solid #17a2b8; } /* Info-Blau für Scanner */
+    .search-box { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; border-left: 4px solid #17a2b8; } 
     .product-list { list-style: none; padding: 0; margin: 0; max-height: 400px; overflow-y: auto; border: 1px solid #eee; display: none; }
     .product-list.active { display: block; }
     .product-list li { padding: 12px; border-bottom: 1px solid #eee; cursor: pointer; transition: background 0.1s; }
@@ -139,10 +146,19 @@
             </template>
         </ul>
         
-        <div x-show="noResults" class="alert alert-warning mt-3">
-            <i class="fas fa-exclamation-triangle mr-2"></i> Kein Produkt gefunden.
-            <br>
-            <small>Möchten Sie ein <a href="/admin/core/product/add/" class="font-weight-bold">neues Produkt anlegen</a>?</small>
+        <!-- NEU GESTALTETER 'NICHT GEFUNDEN' BEREICH -->
+        <div x-show="noResults" class="alert alert-warning mt-3 text-center p-4 border-warning shadow-sm" style="background-color: #fff3cd; color: #856404;">
+            <div class="mb-3">
+                <i class="fas fa-search-minus fa-3x mb-2"></i>
+                <h4>Nicht gefunden</h4>
+                <p>Der Code <strong x-text="searchQuery" class="bg-white px-2 py-1 rounded border"></strong> ist unbekannt.</p>
+            </div>
+            
+            <!-- Großer Button, der die EAN direkt an das Add-Formular übergibt -->
+            <a :href="'/admin/core/product/add/?ean=' + encodeURIComponent(searchQuery)" 
+               class="btn btn-success btn-lg btn-block shadow-sm">
+                <i class="fas fa-plus-circle mr-2"></i> Produkt jetzt erfassen
+            </a>
         </div>
     </div>
 
