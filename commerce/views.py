@@ -19,7 +19,7 @@ from barcode.writer import ImageWriter
 import json
 from .models import Product, Sale, SaleItem, PurchaseOrder, PurchaseOrderItem
 from core.models import Supplier
-from .utils import render_to_pdf
+from .utils import render_to_pdf, send_invoice_email, generate_invoice_pdf, generate_qr_code_svg
 from .forms import AccountingReportForm, EanLabelForm, MwstReportForm
 from django.utils import timezone
 
@@ -558,3 +558,110 @@ def mwst_report_view(request):
         'title': 'MWST Abrechnungshilfe (ESTV)'
     })
     return render(request, 'commerce/mwst_report_form.html', context)
+
+
+@require_POST
+def api_checkout(request):
+    try:
+        data = json.loads(request.body)
+        items = data.get('items', [])
+        payment_method = data.get('payment_method', 'CASH')
+        customer_data = data.get('customer', None)
+
+        if not items:
+            return JsonResponse({'success': False, 'error': 'Warenkorb leer'})
+
+        # 1. Sale erstellen
+        # Wir übergeben den User (created_by), damit dieser im Audit-Log auftaucht
+        sale = Sale.objects.create(
+            date=timezone.now(),
+            payment_method=payment_method,
+            status=Sale.Status.COMPLETED,
+            created_by=request.user if request.user.is_authenticated else None
+        )
+
+        total_gross = Decimal('0.00')
+
+        # 2. Items hinzufügen
+        for item in items:
+            product = Product.objects.get(id=item['id'])
+            qty = int(item['qty'])
+            
+            # WICHTIG: Kein manueller Abzug (product.stock_quantity -= qty) hier!
+            # Das SaleItem Model kümmert sich in der save() Methode via product.adjust_stock()
+            # automatisch um den Abzug und den Audit-Log Eintrag.
+            # Da wir oben 'sale.created_by' gesetzt haben, wird auch der User korrekt übergeben.
+
+            # SaleItem erstellen
+            SaleItem.objects.create(
+                sale=sale,
+                product=product,
+                quantity=qty,
+                unit_price_gross=product.sales_price 
+            )
+
+            total_gross += (product.sales_price * qty)
+
+        # 3. Totals berechnen und speichern
+        sale.total_amount_gross = total_gross
+        
+        # Exakte Netto-Berechnung basierend auf den Items (da MwSt Sätze variieren können)
+        total_net = Decimal('0.00')
+        # Wir laden die items neu, damit wir die gespeicherten vat_rates haben
+        for s_item in sale.items.all():
+            vat_rate = s_item.vat_rate or Decimal('0.00')
+            # Rückrechnung: Brutto / (1 + vat_rate/100)
+            net_price = s_item.total_price_gross / (1 + vat_rate / 100)
+            total_net += net_price
+
+        sale.total_amount_net = round(total_net, 2)
+        sale.save()
+
+        # PDF URL Logic (Standard: Thermo-Bon)
+        pdf_url = f"/commerce/sale/{sale.id}/pdf/" 
+
+        # 4. Spezifische Logik für RECHNUNG
+        if payment_method == 'INVOICE' and customer_data:
+            success, info = send_invoice_email(sale, customer_data)
+            if not success:
+                print(f"Mail Error: {info}")
+            
+            # Optional: Link zum A4 PDF statt Bon
+            # pdf_url = f"/commerce/sale/{sale.id}/invoice-pdf/"
+
+        return JsonResponse({
+            'success': True, 
+            'sale_id': sale.id,
+            'pdf_url': pdf_url
+        })
+
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': str(e)})
+
+def sale_invoice_pdf_view(request, sale_id):
+    """
+    NEU: View um die A4 Rechnung manuell herunterzuladen (via URL).
+    """
+    sale = get_object_or_404(Sale, id=sale_id)
+    
+    # Dummy Kunde für manuellen Nachdruck
+    customer_dummy = {
+        'first_name': 'Kunde',
+        'last_name': '(Nachdruck)',
+        'address': 'Musterstrasse 1',
+        'zip_code': '8000',
+        'city': 'Zürich',
+        'email': ''
+    }
+    
+    # QR Code generieren
+    qr_data = f"SPC\n0200\n\n\n\n\n\n\n\nRechnung {sale.id}\nCHF\n{sale.total_amount_gross}\n\n\n\n"
+    qr_svg = generate_qr_code_svg(qr_data)
+    
+    # PDF generieren
+    pdf_content = generate_invoice_pdf(sale, customer_dummy, qr_svg)
+    
+    # Als HTTP Response zurückgeben
+    response = HttpResponse(pdf_content, content_type='application/pdf')
+    response['Content-Disposition'] = f'inline; filename="Rechnung_{sale.id}.pdf"'
+    return response

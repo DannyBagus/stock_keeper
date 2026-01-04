@@ -1,11 +1,17 @@
 import io
 import os
+import re
 from django.http import HttpResponse
-from django.template.loader import get_template
+from django.template.loader import get_template, render_to_string
 from xhtml2pdf import pisa
 from django.conf import settings
 from datetime import date 
 from decimal import Decimal 
+
+import segno
+from django.core.mail import EmailMessage
+from django.utils import timezone
+from weasyprint import HTML, CSS
 
 
 # Konstante für den MwSt-Satz (nur für die Anzeige als Fallback)
@@ -106,3 +112,191 @@ def render_to_pdf(template_src, context_dict={}):
         return HttpResponse('Wir hatten einige Fehler <pre>%s</pre>' % html, status=500)
     
     return HttpResponse(result.getvalue(), content_type='application/pdf')
+
+
+def clean_qr_text(text, max_length=70):
+    """
+    Bereinigt Text für Swiss QR Bill:
+    - Ersetzt Zeilenumbrüche durch Leerzeichen
+    - Entfernt nicht erlaubte Zeichen (vereinfacht)
+    - Kürzt auf max_length
+    """
+    if not text:
+        return ""
+    # Zeilenumbrüche entfernen
+    text = str(text).replace('\n', ' ').replace('\r', '')
+    # Mehrfache Leerzeichen reduzieren
+    text = re.sub(' +', ' ', text)
+    return text[:max_length].strip()
+
+def format_swiss_qr_content(sale, customer_data):
+    """
+    Erstellt den exakten String (Payload) für den Swiss QR Code
+    gemäss SIX Implementation Guidelines (SPC 0200).
+    """
+    
+    # 1. Header
+    data = [
+        "SPC",      # QRType
+        "0200",     # Version
+        "1"         # Coding (1 = UTF-8)
+    ]
+
+    # 2. Creditor (Wir)
+    iban = "CH4109000000152652867" # Deine IBAN ohne Leerzeichen
+    
+    data.append(iban) 
+    
+    # Creditor Address (Combined Address 'K' oder Structured 'S')
+    # Wir nutzen 'K' (Combined) da einfacher, wenn Strasse/Nr getrennt komplex ist,
+    # aber SIX empfiehlt 'S'. Hier 'K' für Robustheit mit deinen Daten:
+    data.extend([
+        "K",                    # Address Type
+        "Mileja GmbH",          # Name
+        "Rittergasse 20",       # Strasse + Nr (Zeile 1)
+        "4051 Basel",           # PLZ + Ort (Zeile 2)
+        "",                     # Empty (Country, optional, bei K meist weggelassen oder inferred)
+        "",                     # Empty
+        "CH"                    # Country
+    ])
+
+    # 3. Ultimate Creditor (leer, da wir es selbst sind)
+    data.extend(["", "", "", "", "", "", ""])
+
+    # 4. Payment Amount
+    # Format: 0.00 (Punkt als Dezimaltrenner)
+    amount = "{:.2f}".format(sale.total_amount_gross)
+    data.extend([
+        amount,     # Amount
+        "CHF"       # Currency
+    ])
+
+    # 5. Ultimate Debtor (Kunde)
+    # Adresse des Kunden zusammenbauen
+    c_name = clean_qr_text(f"{customer_data.get('first_name', '')} {customer_data.get('last_name', '')}")
+    c_address = clean_qr_text(customer_data.get('address', ''))
+    c_zip_city = clean_qr_text(f"{customer_data.get('zip_code', '')} {customer_data.get('city', '')}")
+    
+    # Falls Pflichtfelder fehlen, füllen wir mit Platzhaltern, damit QR valide bleibt
+    if not c_name: c_name = "Kunde"
+    
+    data.extend([
+        "K",            # Address Type
+        c_name,         # Name
+        c_address,      # Strasse Zeile
+        c_zip_city,     # PLZ Ort Zeile
+        "", "",         # Empty
+        "CH"            # Country (Annahme: Schweiz)
+    ])
+
+    # 6. Reference
+    # Wir nutzen "NON" (Non-structured), da wir keine QRR-Referenz (mit spezieller ID) haben.
+    # Bei 'NON' bleibt die Referenzzeile leer, die Info kommt in "Unstructured Message".
+    data.extend([
+        "NON", # Ref Type
+        ""     # Reference
+    ])
+
+    # 7. Unstructured Message
+    msg = clean_qr_text(f"Rechnung {sale.id}")
+    data.append(msg)
+
+    # 8. Trailer
+    data.append("EPD") # End of Payment Data
+    
+    # 9. Additional Info (leer)
+    data.extend(["", ""])
+
+    # Zusammenfügen mit Newlines
+    return "\n".join(data)
+
+def generate_qr_code_svg(qr_data):
+    """
+    Erstellt den QR-Code als SVG-String mit segno.
+    """
+    qr = segno.make(qr_data, error='M', micro=False)
+    
+    buff = io.BytesIO()
+    # scale=4 sorgt für gute Auflösung.
+    # border=0 wichtig, da wir Rand CSS-seitig steuern
+    qr.save(buff, kind='svg', scale=4, border=0)
+    buff.seek(0)
+    return buff.read().decode('utf-8')
+
+def generate_invoice_pdf(sale, customer_data, qr_svg=None):
+    """
+    Generiert das PDF basierend auf dem HTML-Template.
+    """
+    # Wenn kein SVG übergeben wurde, generieren wir eines
+    if not qr_svg:
+        payload = format_swiss_qr_content(sale, customer_data)
+        qr_svg = generate_qr_code_svg(payload)
+
+    context = {
+        'sale': sale,
+        'customer': customer_data,
+        'qr_code_svg': qr_svg,
+        'STATIC_ROOT': settings.STATIC_ROOT,
+        'items': sale.items.all(), # Items explizit übergeben für Template
+        'total_cost_net': sale.total_amount_net,
+        'total_cost_gross': sale.total_amount_gross,
+        # MwSt Differenz berechnen für Anzeige
+        'total_mwst': sale.total_amount_gross - sale.total_amount_net,
+        # Annahme: Mischsteuersatz oder fix. Für Anzeige nehmen wir den häufigsten oder 8.1
+        'mwst_rate_percent': '8.1', 
+        'formatted_date': sale.date.strftime("%d.%m.%Y"),
+        'formatted_creator': sale.created_by.username if sale.created_by else "System"
+    }
+
+    html_string = render_to_string('commerce/invoice_pdf.html', context)
+    
+    # base_url ist wichtig für statische Dateien
+    html = HTML(string=html_string, base_url=settings.BASE_DIR)
+    pdf_file = html.write_pdf()
+    
+    return pdf_file
+
+def send_invoice_email(sale, customer_data):
+    """
+    Hauptfunktion: Generiert QR & PDF und sendet die E-Mail.
+    """
+    try:
+        # 1. QR Payload generieren
+        qr_payload = format_swiss_qr_content(sale, customer_data)
+        qr_svg = generate_qr_code_svg(qr_payload)
+
+        # 2. PDF generieren
+        pdf_content = generate_invoice_pdf(sale, customer_data, qr_svg)
+
+        # 3. E-Mail Body rendern
+        email_body = render_to_string('commerce/invoice_mail.html', {
+            'sale': sale,
+            'customer': customer_data
+        })
+
+        # 4. E-Mail konfigurieren
+        subject = f'Rechnung #{sale.id} - Mileja GmbH'
+        to_email = [customer_data['email']]
+        cc_email = ['info@mileja.ch']
+
+        email = EmailMessage(
+            subject,
+            email_body,
+            settings.DEFAULT_FROM_EMAIL,
+            to_email,
+            cc=cc_email,
+        )
+        email.content_subtype = "html"
+
+        # 5. PDF anhängen
+        filename = f"Rechnung_{sale.id}.pdf"
+        email.attach(filename, pdf_content, 'application/pdf')
+
+        # 6. Senden
+        email.send()
+        return True, "Gesendet"
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return False, str(e)
