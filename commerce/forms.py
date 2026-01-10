@@ -4,7 +4,7 @@ from django.forms.models import BaseInlineFormSet, ModelForm
 from decimal import Decimal
 from django.core.exceptions import ObjectDoesNotExist
 from core.models import Category
-from .models import PurchaseOrder # Import hinzufügen
+from .models import PurchaseOrder, Sale # Import hinzufügen
 from core.widgets import DragAndDropFileWidget 
 
 class SaleItemFormSet(BaseInlineFormSet):
@@ -62,6 +62,13 @@ class AccountingReportForm(forms.Form):
         queryset=Category.objects.all(),
         widget=forms.SelectMultiple(attrs={'class': 'form-control', 'style': 'height: 150px;'}),
         required=False
+    )
+    payment_methods = forms.MultipleChoiceField(
+        choices=Sale.PaymentMethod.choices,
+        label="Zahlungsmethoden (Optional)",
+        required=False,
+        help_text="Leer lassen für alle Zahlungsarten",
+        widget=forms.SelectMultiple(attrs={'class': 'form-control', 'style': 'height: 120px;'})
     )
     
 # Fomrular für Barcode Etiketten

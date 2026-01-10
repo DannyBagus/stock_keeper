@@ -2,7 +2,7 @@
 {% load static %}
 
 {% block content %}
-<div class="col-12 col-md-8 offset-md-2">
+<div class="col-12 col-md-10 offset-md-1">
     <div class="card card-primary card-outline">
         <div class="card-header">
             <h3 class="card-title"><i class="fas fa-chart-line mr-2"></i> Umsatzliste generieren</h3>
@@ -10,12 +10,13 @@
         <div class="card-body">
             <p class="text-muted">
                 Erstellen Sie einen detaillierten Umsatz-Report für die Buchhaltung. 
-                Die Auswertung gruppiert Umsätze nach Produktkategorien (z.B. für separate Erlöskonten Cafe/Laden).
+                Filtern Sie nach Datum, Produktkategorien und Zahlungsmethoden.
             </p>
             
             <form method="POST" target="_blank">
                 {% csrf_token %}
                 
+                <!-- Datum Auswahl -->
                 <div class="row">
                     <div class="col-md-6">
                         <div class="form-group">
@@ -31,10 +32,22 @@
                     </div>
                 </div>
 
-                <div class="form-group mt-3">
-                    <label for="{{ form.categories.id_for_label }}">{{ form.categories.label }}</label>
-                    {{ form.categories }}
-                    <small class="form-text text-muted">Halten Sie Strg (Windows) oder Cmd (Mac) gedrückt, um mehrere Kategorien zu wählen.</small>
+                <!-- Filter Auswahl (Nebeneinander) -->
+                <div class="row mt-3">
+                    <div class="col-md-6">
+                        <div class="form-group">
+                            <label for="{{ form.categories.id_for_label }}">{{ form.categories.label }}</label>
+                            {{ form.categories }}
+                            <small class="form-text text-muted">Strg/Cmd gedrückt halten für Mehrfachauswahl.</small>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="form-group">
+                            <label for="{{ form.payment_methods.id_for_label }}">{{ form.payment_methods.label }}</label>
+                            {{ form.payment_methods }}
+                            <small class="form-text text-muted">Z.B. nur Barzahlung oder nur Twint auswählen.</small>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="mt-4">

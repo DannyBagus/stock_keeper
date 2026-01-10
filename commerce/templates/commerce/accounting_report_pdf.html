@@ -27,9 +27,16 @@
         h1 { color: #aa8684; font-size: 16pt; margin-bottom: 5px; }
         h2 { color: #333; font-size: 12pt; margin-top: 20px; border-bottom: 1px solid #aa8684; padding-bottom: 5px; }
         
-        .period-info { font-size: 10pt; color: #555; margin-bottom: 20px; }
+        .period-info { 
+            font-size: 9pt; 
+            color: #555; 
+            margin-bottom: 20px; 
+            border: 1px solid #eee;
+            padding: 10px;
+            background-color: #f9f9f9;
+        }
 
-        /* TABELLEN – allgemeine Einstellungen */
+        /* TABELLEN */
         table { 
             width: 100%; 
             border-collapse: collapse; 
@@ -51,33 +58,17 @@
             vertical-align: top;
         }
         
-        .num { 
-            text-align: right; 
-        }
+        .num { text-align: right; }
 
         .total-row td { 
             font-weight: bold; 
-            /* KEIN border-top mehr hier! */
             border-bottom: 3px double #333; 
             padding-top: 6px; 
             padding-bottom: 4px;
         }
         
-        .cat-row td { 
-            background-color: #f9f9f9; 
-            font-weight: bold; 
-        }
-
-        /* Spezielle Styles für die Zusammenfassungstabelle */
-        .summary-table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-
-        .summary-table th,
-        .summary-table td {
-            padding: 4px;
-        }
+        .summary-table { width: 100%; border-collapse: collapse; }
+        .summary-table th, .summary-table td { padding: 4px; }
     </style>
 </head>
 <body>
@@ -98,6 +89,14 @@
 
     <div class="period-info">
         <strong>Periode:</strong> {{ start_date|date:"d.m.Y" }} bis {{ end_date|date:"d.m.Y" }}
+        
+        {% if selected_payment_methods %}
+            <br>
+            <strong>Filter (Zahlung):</strong> {{ selected_payment_methods|join:", " }}
+        {% else %}
+            <br>
+            <strong>Filter (Zahlung):</strong> Alle
+        {% endif %}
     </div>
 
     <!-- 1. ZUSAMMENFASSUNG PRO KATEGORIE -->
@@ -122,7 +121,6 @@
             </tr>
             {% endfor %}
 
-            <!-- Trennlinie über TOTAL in eigener Zeile -->
             <tr>
                 <td colspan="4" style="border-bottom: 1px solid #333; height: 4px;"></td>
             </tr>

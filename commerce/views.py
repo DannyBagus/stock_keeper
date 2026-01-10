@@ -323,26 +323,38 @@ def shopify_webhook(request):
 
 @staff_member_required
 def accounting_report_view(request):
+    """
+    Umsatz-Report: Filterbar nach Datum, Kategorien UND Zahlungsmethoden.
+    """
     if request.method == 'POST':
         form = AccountingReportForm(request.POST)
         if form.is_valid():
             start_date = form.cleaned_data['start_date']
             end_date = form.cleaned_data['end_date']
             categories = form.cleaned_data['categories']
+            payment_methods = form.cleaned_data['payment_methods'] # NEU: Liste der gewählten Codes
             
+            # 1. Sale Items holen (für Kategorie-Stats)
             items_qs = SaleItem.objects.filter(
                 sale__date__date__gte=start_date,
                 sale__date__date__lte=end_date
             ).select_related('product', 'product__category', 'sale')
+            
             if categories:
                 items_qs = items_qs.filter(product__category__in=categories)
             
+            # NEU: Filter nach Zahlungsmethode (auf Sale-Ebene via Relation)
+            if payment_methods:
+                items_qs = items_qs.filter(sale__payment_method__in=payment_methods)
+            
+            # Aggregation
             category_stats = {}
             total_period_gross = Decimal('0.00')
             for item in items_qs:
                 cat_name = item.product.category.name if item.product.category else "Ohne Kategorie"
                 if cat_name not in category_stats:
                     category_stats[cat_name] = {'gross': Decimal('0.00'), 'net': Decimal('0.00'), 'vat': Decimal('0.00')}
+                
                 qty = item.quantity
                 gross = item.unit_price_gross * qty if item.unit_price_gross else Decimal('0.00')
                 vat_rate = item.vat_rate or Decimal('0.00')
@@ -355,11 +367,35 @@ def accounting_report_view(request):
                 category_stats[cat_name]['vat'] += vat_amt
                 total_period_gross += gross
             
+            # 2. Sales Liste holen
             sales_qs = Sale.objects.filter(date__date__gte=start_date, date__date__lte=end_date).order_by('date')
+            
             if categories:
                 sales_qs = sales_qs.filter(items__product__category__in=categories).distinct()
             
-            context = {'start_date': start_date, 'end_date': end_date, 'category_stats': category_stats, 'sales_list': sales_qs, 'total_period_gross': total_period_gross, 'generation_date': timezone.now()}
+            # NEU: Filter nach Zahlungsmethode für die Sales-Liste
+            if payment_methods:
+                sales_qs = sales_qs.filter(payment_method__in=payment_methods)
+            
+            # "Schöne" Namen für die gewählten Methoden für das PDF aufbereiten
+            payment_methods_display = []
+            if payment_methods:
+                # Hole alle Choices aus dem Model als Dict
+                choices_dict = dict(Sale.PaymentMethod.choices)
+                for pm_code in payment_methods:
+                    payment_methods_display.append(choices_dict.get(pm_code, pm_code))
+
+            context = {
+                'start_date': start_date, 
+                'end_date': end_date, 
+                'category_stats': category_stats, 
+                'sales_list': sales_qs, 
+                'total_period_gross': total_period_gross, 
+                'generation_date': timezone.now(),
+                # Für Anzeige im PDF
+                'selected_payment_methods': payment_methods_display 
+            }
+            
             response = render_to_pdf('commerce/accounting_report_pdf.html', context)
             if isinstance(response, HttpResponse) and response.status_code == 200:
                 filename = f"Umsatzliste_{start_date}_{end_date}.pdf"
@@ -369,6 +405,7 @@ def accounting_report_view(request):
                 return HttpResponse("Fehler beim Generieren des PDFs", status=500)
     else:
         form = AccountingReportForm()
+    
     context = admin.site.each_context(request)
     context.update({'form': form, 'title': 'Umsatzliste & Buchhaltungs-Report'})
     return render(request, 'commerce/accounting_report_form.html', context)
