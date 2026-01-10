@@ -9,20 +9,18 @@
     function posApp() {
         return {
             searchQuery: '', searchResults: [], cart: [], noResults: false, isLoading: false,
-            showCheckoutModal: false, showSuccessModal: false,
+            showCheckoutModal: false, showSuccessModal: false, showDiversesModal: false, // NEU: Diverses Modal
             scanner: null, isCameraActive: false, showScannerControls: false, scanCooldown: false,
             createdSaleId: null, createdPdfUrl: '',
             toast: { show: false, message: '', type: 'success' },
             paymentMethod: 'CASH', 
             
-            // --- NEU: KUNDENDATEN FÜR RECHNUNG ---
+            // NEU: Diverses Preis Input und Produkt-Cache
+            diversesPrice: '',
+            diversesProduct: null,
+            
             customer: {
-                first_name: '',
-                last_name: '',
-                address: '',
-                zip_code: '',
-                city: '',
-                email: ''
+                first_name: '', last_name: '', address: '', zip_code: '', city: '', email: ''
             },
 
             // --- KONFIGURATION SUMUP ---
@@ -89,10 +87,77 @@
                 }
                 if (isEnterPress && this.searchResults.length === 1) { this.addToCart(this.searchResults[0]); }
             },
+
+            // --- NEU: DIVERSES LOGIK ---
+            async openDiversesModal() {
+                // Wir suchen das "Diverses" Produkt via API anhand der SKU 'DIVERSES'
+                // Dies stellt sicher, dass wir eine gültige ID für das Backend haben.
+                try {
+                    const res = await fetch(`/commerce/api/search/?q=DIVERSES`);
+                    const data = await res.json();
+                    
+                    // Finde exakten Match auf SKU
+                    const diversesProd = data.results.find(p => p.sku === 'DIVERSES');
+                    
+                    if (!diversesProd) {
+                        this.showNotification('Fehler: Produkt mit SKU "DIVERSES" nicht gefunden!', 'error');
+                        return;
+                    }
+                    
+                    this.diversesProduct = diversesProd;
+                    this.diversesPrice = ''; // Reset Input
+                    this.showDiversesModal = true;
+                    
+                    // Fokus auf das Input Feld setzen
+                    this.$nextTick(() => {
+                        const input = document.getElementById('diverses-price-input');
+                        if (input) input.focus();
+                    });
+                } catch (e) {
+                    this.showNotification('Verbindungsfehler beim Laden von "Diverses"', 'error');
+                }
+            },
+            
+            addDiversesToCart() {
+                if (!this.diversesPrice || isNaN(parseFloat(this.diversesPrice)) || parseFloat(this.diversesPrice) <= 0) {
+                    this.showNotification('Bitte gültigen Betrag eingeben', 'error');
+                    return;
+                }
+                
+                const price = parseFloat(this.diversesPrice);
+                
+                // Wir fügen das Produkt hinzu, aber mit custom_price Attribut
+                // Diverses wird immer als einzelne Position hinzugefügt, um Konflikte zu vermeiden
+                this.cart.push({ 
+                    id: this.diversesProduct.id, 
+                    name: 'Diverses', // Oder this.diversesProduct.name
+                    price: price, // Für Anzeige im Frontend
+                    ean: '', 
+                    qty: 1,
+                    custom_price: price // Wichtig: Wird ans Backend gesendet
+                });
+                
+                this.showNotification(`Diverses ${this.formatMoney(price)} hinzugefügt`);
+                this.showDiversesModal = false;
+                this.searchQuery = '';
+                this.focusSearch();
+            },
+
             addToCart(product) {
-                const existingItem = this.cart.find(item => item.id === product.id);
-                if (existingItem) { existingItem.qty++; } 
-                else { this.cart.push({ id: product.id, name: product.name, price: product.price, ean: product.ean, qty: 1 }); }
+                // Check if item exists (aber nur, wenn es kein custom_price item ist)
+                const existingItem = this.cart.find(item => item.id === product.id && !item.custom_price);
+                
+                if (existingItem) { 
+                    existingItem.qty++; 
+                } else { 
+                    this.cart.push({ 
+                        id: product.id, 
+                        name: product.name, 
+                        price: product.price, 
+                        ean: product.ean, 
+                        qty: 1 
+                    }); 
+                }
                 this.showNotification(`${product.name} +1`);
                 this.searchQuery = ''; this.searchResults = []; this.noResults = false;
                 this.$nextTick(() => this.focusSearch());
@@ -128,14 +193,11 @@
             startSumUpPayment() {
                 this.paymentMethod = 'SUMUP'; 
                 this.saveState('SUMUP');
-
                 const total = this.cartTotal.toFixed(2);
                 const title = encodeURIComponent('Kauf-' + new Date().getTime()); 
                 const currency = 'CHF';
                 const callback = encodeURIComponent(window.location.href);
-                
                 const url = `sumupmerchant://pay/1.0?affiliate-key=${this.sumUpAffiliateKey}&app-id=${this.sumUpAppId}&total=${total}&currency=${currency}&title=${title}&skip-screen-success=true&callback=${callback}`;
-                
                 window.location.href = url;
             },
 
@@ -255,6 +317,26 @@
          x-transition:leave-end="opacity-0 transform -translate-y-8">
         <i class="fas" :class="{ 'fa-check-circle': toast.type === 'success', 'fa-exclamation-circle': toast.type === 'error', 'fa-exclamation-triangle': toast.type === 'warning', 'fa-info-circle': toast.type === 'info' }"></i>
         <span x-text="toast.message"></span>
+    </div>
+
+    <!-- MODAL: DIVERSES PREIS EINGABE (NEU) -->
+    <div class="modal-overlay" x-show="showDiversesModal" style="display: none;">
+        <div class="modal-box" @click.away="showDiversesModal = false" style="max-width: 400px;">
+            <div class="modal-header bg-warning text-dark">
+                <h5 class="modal-title"><i class="fas fa-tag"></i> Diverses / Manuell</h5>
+                <button type="button" class="close" @click="showDiversesModal = false">&times;</button>
+            </div>
+            <div class="modal-body p-4">
+                <label class="font-weight-bold">Preis eingeben (CHF):</label>
+                <div class="input-group input-group-lg mb-3">
+                    <input type="number" id="diverses-price-input" class="form-control" placeholder="0.00" step="0.05" x-model="diversesPrice" @keydown.enter.prevent="addDiversesToCart()">
+                    <div class="input-group-append">
+                        <span class="input-group-text">CHF</span>
+                    </div>
+                </div>
+                <button class="btn btn-primary btn-block btn-lg" @click="addDiversesToCart()">Hinzufügen</button>
+            </div>
+        </div>
     </div>
 
     <!-- MODALS (Checkout & Success) -->
@@ -399,6 +481,10 @@
                            autofocus>
                     <div class="input-group-append">
                         <button class="btn btn-primary" @click="performSearch(true)">Suchen</button>
+                        <!-- NEU: DIVERSES BUTTON -->
+                        <button class="btn btn-warning text-dark font-weight-bold" @click="openDiversesModal()" title="Manuelle Preiseingabe">
+                            <i class="fas fa-tag"></i> Diverses
+                        </button>
                     </div>
                 </div>
                 
@@ -436,11 +522,13 @@
                                 </tr>
                             </thead>
                             <tbody>
-                                <template x-for="(item, index) in cart" :key="item.id">
+                                <template x-for="(item, index) in cart" :key="item.id + (item.custom_price ? '_cust' : '')">
                                     <tr>
                                         <td>
                                             <span x-text="item.name"></span>
                                             <div class="small text-muted" x-text="formatMoney(item.price)"></div>
+                                            <!-- Anzeige für manuellen Preis -->
+                                            <div x-show="item.custom_price" class="badge badge-warning text-dark" style="font-size: 0.7em;">Manuell</div>
                                         </td>
                                         <td>
                                             <div class="input-group input-group-sm">

@@ -2,7 +2,8 @@ import hmac
 import hashlib
 import base64
 import json
-from io import BytesIO 
+from io import BytesIO
+from decimal import Decimal
 from django.conf import settings
 from django.shortcuts import render, get_object_or_404, redirect
 from django.http import JsonResponse, HttpResponse, HttpResponseForbidden
@@ -13,15 +14,16 @@ from django.views.decorators.http import require_POST, require_GET
 from django.contrib.admin.views.decorators import staff_member_required
 from django.db import transaction
 from django.db.models import Q
-from decimal import Decimal
-import barcode # pip install python-barcode
+from django.utils import timezone
+import barcode 
 from barcode.writer import ImageWriter
-import json
+
 from .models import Product, Sale, SaleItem, PurchaseOrder, PurchaseOrderItem
 from core.models import Supplier
 from .utils import render_to_pdf, send_invoice_email, generate_invoice_pdf, generate_qr_code_svg
 from .forms import AccountingReportForm, EanLabelForm, MwstReportForm
-from django.utils import timezone
+
+# --- POS VIEWS ---
 
 @staff_member_required
 def pos_view(request):
@@ -45,21 +47,19 @@ def api_search_product(request):
     query = request.GET.get('q', '').strip()
     if not query:
         return JsonResponse({'results': []})
-
     products = Product.objects.filter(
         Q(ean=query) | Q(sku__iexact=query) | Q(name__icontains=query)
     ).select_related('vat', 'supplier')[:10]
-
     results = []
     for p in products:
         display_name = str(p)
-
         results.append({
             'id': p.id,
             'name': display_name,
             'ean': p.ean,
-            'price': float(p.sales_price), 
-            'cost': float(p.cost_price),   
+            'sku': p.sku, # SKU hinzufügen für Frontend-Logik (Diverses)
+            'price': float(p.sales_price),
+            'cost': float(p.cost_price),
             'stock': p.stock_quantity,
             'track_stock': p.track_stock,
             'vat_rate': float(p.vat.rate) if p.vat else 0.0,
@@ -68,50 +68,110 @@ def api_search_product(request):
         })
     return JsonResponse({'results': results})
 
+# --- CHECKOUT LOGIK ---
+
 @staff_member_required
 @require_POST
 @transaction.atomic
 def api_checkout(request):
     try:
         data = json.loads(request.body)
-        cart_items = data.get('items', [])
+        items = data.get('items', [])
         payment_method = data.get('payment_method', 'CASH')
-        
-        if not cart_items:
-            return JsonResponse({'error': 'Warenkorb ist leer'}, status=400)
+        customer_data = data.get('customer', None)
 
+        if not items:
+            return JsonResponse({'success': False, 'error': 'Warenkorb leer'})
+
+        # 1. Sale erstellen
         sale = Sale.objects.create(
+            date=timezone.now(),
             payment_method=payment_method,
+            status=Sale.Status.COMPLETED,
             created_by=request.user,
-            # WICHTIG: Explizit POS setzen (auch wenn es Default ist)
-            channel=Sale.SalesChannel.POS 
+            channel=Sale.SalesChannel.POS
         )
 
-        for item in cart_items:
-            product = Product.objects.get(pk=item['id'])
+        total_gross = Decimal('0.00')
+
+        # 2. Items hinzufügen
+        for item in items:
+            product = Product.objects.get(id=item['id'])
             qty = int(item['qty'])
             
+            # Preis ermitteln:
+            # Standard: Preis aus DB
+            # Ausnahme: 'custom_price' im Request UND Produkt SKU ist 'DIVERSES'
+            custom_price_raw = item.get('custom_price')
+            
+            # Wir holen den Preis standardmässig vom Produkt
+            unit_price = product.sales_price
+            
+            # Wenn es DIVERSES ist und ein Custom Price mitkommt:
+            if product.sku == 'DIVERSES' and custom_price_raw is not None:
+                try:
+                    unit_price = Decimal(str(custom_price_raw))
+                except:
+                    pass # Fallback auf Produktpreis (0.00) bei Fehler
+
+            # WICHTIG: Die VAT Rate muss explizit ermittelt und übergeben werden.
+            # Wenn unit_price gesetzt ist, greift die automatische Ermittlung im Model.save() oft nicht.
+            vat_rate = product.vat.rate if product.vat else Decimal('0.00')
+
+            # SaleItem erstellen (Audit Log passiert automatisch im SaleItem.save())
             SaleItem.objects.create(
                 sale=sale,
                 product=product,
                 quantity=qty,
-                unit_price_gross=product.sales_price,
-                vat_rate=product.vat.rate if product.vat else Decimal('0.00')
+                unit_price_gross=unit_price, # Hier nutzen wir den (evtl. manuellen) Preis
+                vat_rate=vat_rate # <--- BUGFIX: Explizit übergeben
             )
 
-        sale.calculate_totals()
+            total_gross += (unit_price * qty)
+
+        # 3. Totals berechnen
+        sale.total_amount_gross = total_gross
         
+        # Exakte Netto-Berechnung
+        total_net = Decimal('0.00')
+        # Items neu laden um sicherzugehen, dass wir die gespeicherten Daten haben
+        for s_item in sale.items.all():
+            vr = s_item.vat_rate or Decimal('0.00')
+            # Netto = Brutto / (1 + Steuersatz)
+            net_price = s_item.total_price_gross / (Decimal('1.00') + (vr / Decimal('100.00')))
+            total_net += net_price
+
+        sale.total_amount_net = round(total_net, 2)
+        sale.save()
+
+        # PDF URL Logic (Standard: Thermo-Bon)
+        pdf_url = f"/commerce/sale/{sale.id}/pdf/" 
+
+        # 4. Spezifische Logik für RECHNUNG
+        if payment_method == 'INVOICE' and customer_data:
+            success, info = send_invoice_email(sale, customer_data)
+            if not success:
+                print(f"Mail Error: {info}")
+            
+            # Optional: Falls man direkt das A4 PDF zurückgeben will
+            # pdf_url = f"/commerce/sale/{sale.id}/invoice-pdf/"
+
         return JsonResponse({
             'success': True, 
             'sale_id': sale.id,
-            'pdf_url': f'/commerce/sale/{sale.id}/pdf/' 
+            'pdf_url': pdf_url
         })
 
     except Exception as e:
-        return JsonResponse({'error': str(e)}, status=500)
+        import traceback
+        traceback.print_exc()
+        return JsonResponse({'success': False, 'error': str(e)})
+
+# --- PDF VIEWS ---
 
 @staff_member_required
 def sale_receipt_pdf_view(request, sale_id):
+    """ Thermodrucker Quittung """
     sale = get_object_or_404(Sale, id=sale_id)
     response = render_to_pdf(
         'commerce/sale_receipt_pdf.html',
@@ -128,6 +188,36 @@ def sale_receipt_pdf_view(request, sale_id):
         return HttpResponse("Fehler beim Generieren des PDFs", status=500)
 
 @staff_member_required
+def sale_invoice_pdf_view(request, sale_id):
+    """ A4 Rechnung manuell herunterladen """
+    sale = get_object_or_404(Sale, id=sale_id)
+    
+    # Dummy Kunde für manuellen Nachdruck (da wir keine Kundendaten im Sale speichern)
+    customer_dummy = {
+        'first_name': 'Kunde',
+        'last_name': '(Nachdruck)',
+        'address': '---',
+        'zip_code': '----',
+        'city': '---',
+        'email': ''
+    }
+    
+    try:
+        from .utils import format_swiss_qr_content
+        qr_payload = format_swiss_qr_content(sale, customer_dummy)
+        qr_svg = generate_qr_code_svg(qr_payload)
+    except Exception as e:
+        qr_svg = None
+        print(f"QR Error: {e}")
+    
+    pdf_content = generate_invoice_pdf(sale, customer_dummy, qr_svg)
+    response = HttpResponse(pdf_content, content_type='application/pdf')
+    response['Content-Disposition'] = f'inline; filename="Rechnung_{sale.id}.pdf"'
+    return response
+
+# --- PURCHASE CHECKOUT ---
+
+@staff_member_required
 @require_POST
 @transaction.atomic
 def api_purchase_checkout(request):
@@ -135,21 +225,17 @@ def api_purchase_checkout(request):
         data = json.loads(request.body)
         supplier_id = data.get('supplier_id')
         cart_items = data.get('items', [])
-        
         if not supplier_id:
             return JsonResponse({'error': 'Lieferant fehlt'}, status=400)
         if not cart_items:
             return JsonResponse({'error': 'Bestellliste ist leer'}, status=400)
-
         supplier = Supplier.objects.get(pk=supplier_id)
-        
         po = PurchaseOrder.objects.create(
             supplier=supplier,
             created_by=request.user,
             status=PurchaseOrder.Status.DRAFT,
             is_booked=False
         )
-
         for item in cart_items:
             product = Product.objects.get(pk=item['id'])
             qty = int(item['qty'])
@@ -160,13 +246,11 @@ def api_purchase_checkout(request):
                 quantity=qty,
                 unit_price=cost_price,
             )
-
         return JsonResponse({
-            'success': True, 
+            'success': True,
             'order_id': po.id,
-            'redirect_url': f'/admin/commerce/purchaseorder/{po.id}/change/' 
+            'redirect_url': f'/admin/commerce/purchaseorder/{po.id}/change/'
         })
-
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
 
@@ -175,16 +259,13 @@ def api_purchase_checkout(request):
 def verify_shopify_webhook(request):
     secret = settings.SHOPIFY_WEBHOOK_SECRET.encode('utf-8')
     hmac_header = request.headers.get('X-Shopify-Hmac-Sha256')
-    
     if not hmac_header:
         return False
-
     digest = hmac.new(secret, request.body, hashlib.sha256).digest()
     computed_hmac = base64.b64encode(digest).decode('utf-8')
-
     return hmac.compare_digest(computed_hmac, hmac_header)
 
-@csrf_exempt 
+@csrf_exempt
 @require_POST
 def shopify_webhook(request):
     """
@@ -192,140 +273,93 @@ def shopify_webhook(request):
     """
     if hasattr(settings, 'SHOPIFY_WEBHOOK_SECRET') and settings.SHOPIFY_WEBHOOK_SECRET and not verify_shopify_webhook(request):
         return HttpResponseForbidden("Invalid Signature")
-
     try:
         data = json.loads(request.body)
-        
         shopify_order_id = str(data.get('id'))
         if Sale.objects.filter(transaction_id=shopify_order_id).exists():
             return HttpResponse("Order already processed", status=200)
-                    
-        # 1. Versuchen, den System-User zu laden
+        
         User = get_user_model()
         system_user = None
         try:
             system_user = User.objects.get(username='shopify_bot')
         except User.DoesNotExist:
-            # Fallback: Wenn User noch nicht existiert, nehmen wir None 
-            # oder erstellen ihn on-the-fly (weniger empfohlen wegen Seiteneffekten)
             pass
 
-        # FIX: Channel auf WEB setzen!
         sale = Sale.objects.create(
-            payment_method=Sale.PaymentMethod.SHOPIFY_PAYMENTS, # Nutzt den Wert 'SHOPIFY'
+            payment_method=Sale.PaymentMethod.SHOPIFY_PAYMENTS,
             transaction_id=shopify_order_id,
-            channel=Sale.SalesChannel.WEB, # <--- WICHTIG: Online Kanal setzen
+            channel=Sale.SalesChannel.WEB,
             created_by=system_user
         )
-
         for line_item in data.get('line_items', []):
             sku = line_item.get('sku')
             quantity = line_item.get('quantity')
-            price = Decimal(line_item.get('price')) 
-            
+            price = Decimal(line_item.get('price'))
             product = None
             if sku:
                 product = Product.objects.filter(sku=sku).first()
-            
             if not product:
                 print(f"WARNUNG: Shopify Produkt mit SKU {sku} nicht in DB gefunden.")
                 continue
-
+            
+            # Auch hier explizit VAT setzen!
+            vat_rate = product.vat.rate if product.vat else Decimal('0.00')
+            
             SaleItem.objects.create(
                 sale=sale,
                 product=product,
                 quantity=quantity,
                 unit_price_gross=price,
-                vat_rate=product.vat.rate if product.vat else Decimal('0.00')
+                vat_rate=vat_rate
             )
-
         sale.calculate_totals()
-        
         return HttpResponse("Webhook received and processed", status=200)
-
     except Exception as e:
         print(f"Error processing webhook: {e}")
         return HttpResponse("Internal Server Error", status=500)
-    
-    
-# accounting report
+
+# --- REPORTS ---
+
 @staff_member_required
 def accounting_report_view(request):
-    """
-    Zeigt das Formular für den Umsatz-Report und generiert das PDF bei POST.
-    """
     if request.method == 'POST':
         form = AccountingReportForm(request.POST)
         if form.is_valid():
             start_date = form.cleaned_data['start_date']
             end_date = form.cleaned_data['end_date']
             categories = form.cleaned_data['categories']
-
-            # 1. Daten holen
-            # Wir brauchen SaleItems, um die Summen pro Kategorie zu bilden
+            
             items_qs = SaleItem.objects.filter(
                 sale__date__date__gte=start_date,
                 sale__date__date__lte=end_date
             ).select_related('product', 'product__category', 'sale')
-
             if categories:
                 items_qs = items_qs.filter(product__category__in=categories)
-
-            # 2. Aggregation pro Kategorie
+            
             category_stats = {}
-            # Struktur: { 'KategorieName': {'gross': 0, 'net': 0, 'vat': 0} }
-
             total_period_gross = Decimal('0.00')
-
             for item in items_qs:
                 cat_name = item.product.category.name if item.product.category else "Ohne Kategorie"
-                
                 if cat_name not in category_stats:
-                    category_stats[cat_name] = {
-                        'gross': Decimal('0.00'), 
-                        'net': Decimal('0.00'), 
-                        'vat': Decimal('0.00')
-                    }
-
-                # Berechnung für dieses Item
-                # item.total_price_gross ist eine Property, wir rechnen hier manuell zur Sicherheit
+                    category_stats[cat_name] = {'gross': Decimal('0.00'), 'net': Decimal('0.00'), 'vat': Decimal('0.00')}
                 qty = item.quantity
                 gross = item.unit_price_gross * qty if item.unit_price_gross else Decimal('0.00')
-                
-                # Netto/MwSt rückrechnen
                 vat_rate = item.vat_rate or Decimal('0.00')
                 divisor = Decimal('1.00') + (vat_rate / Decimal('100.00'))
                 net = gross / divisor
                 vat_amt = gross - net
-
-                # Zu Kategorie addieren
+                
                 category_stats[cat_name]['gross'] += gross
                 category_stats[cat_name]['net'] += net
                 category_stats[cat_name]['vat'] += vat_amt
-                
                 total_period_gross += gross
-
-            # 3. Detail-Liste der Verkäufe (Sales)
-            # Wir holen die Sales separat, um Duplikate zu vermeiden, falls ein Sale mehrere Items hat
-            sales_qs = Sale.objects.filter(
-                date__date__gte=start_date,
-                date__date__lte=end_date
-            ).order_by('date')
             
-            # Wenn nach Kategorie gefiltert wurde, nur Sales anzeigen, die solche Items enthalten
+            sales_qs = Sale.objects.filter(date__date__gte=start_date, date__date__lte=end_date).order_by('date')
             if categories:
                 sales_qs = sales_qs.filter(items__product__category__in=categories).distinct()
-
-            # 4. PDF Generieren
-            context = {
-                'start_date': start_date,
-                'end_date': end_date,
-                'category_stats': category_stats,
-                'sales_list': sales_qs,
-                'total_period_gross': total_period_gross,
-                'generation_date': timezone.now()
-            }
             
+            context = {'start_date': start_date, 'end_date': end_date, 'category_stats': category_stats, 'sales_list': sales_qs, 'total_period_gross': total_period_gross, 'generation_date': timezone.now()}
             response = render_to_pdf('commerce/accounting_report_pdf.html', context)
             if isinstance(response, HttpResponse) and response.status_code == 200:
                 filename = f"Umsatzliste_{start_date}_{end_date}.pdf"
@@ -333,90 +367,35 @@ def accounting_report_view(request):
                 return response
             else:
                 return HttpResponse("Fehler beim Generieren des PDFs", status=500)
-
     else:
         form = AccountingReportForm()
-
-    # Admin Kontext laden für Navigation
     context = admin.site.each_context(request)
-    context.update({
-        'form': form,
-        'title': 'Umsatzliste & Buchhaltungs-Report'
-    })
+    context.update({'form': form, 'title': 'Umsatzliste & Buchhaltungs-Report'})
     return render(request, 'commerce/accounting_report_form.html', context)
-
 
 @staff_member_required
 def ean_label_view(request):
-    """
-    Generiert eine PDF-Liste mit EAN-Barcodes zum Scannen an der Kasse.
-    """
     if request.method == 'POST':
         form = EanLabelForm(request.POST)
         if form.is_valid():
             categories = form.cleaned_data['categories']
-            
-            # Produkte filtern
             products = Product.objects.filter(is_active=True).exclude(ean='')
-            
             if categories:
                 products = products.filter(category__in=categories)
-            
-            # Sortieren nach Kategorie und Name für bessere Übersicht
             products = products.order_by('category__name', 'name')
-            
             product_list = []
-            
-            # Barcode-Bilder generieren
             for p in products:
-                # Wir müssen sicherstellen, dass die EAN gültig ist für den Generator
-                if not p.ean or not p.ean.isdigit():
-                    continue
-                    
+                if not p.ean or not p.ean.isdigit(): continue
                 try:
-                    # EAN13 Generator
-                    # ImageWriter wird benötigt, um ein Bild (kein SVG) für xhtml2pdf zu erstellen
-                    # Wir nutzen Code128 als Fallback, falls EAN13 Checksummen-Fehler wirft, 
-                    # aber für POS ist EAN13 Standard.
                     ean_class = barcode.get_barcode_class('ean13')
-                    
-                    # render gibt ein BytesIO objekt zurück oder speichert file
-                    # Wir nutzen write auf einen Buffer
                     buffer = BytesIO()
-                    
-                    # EAN13 erwartet 12 oder 13 Ziffern. 
-                    # write_text=False: Wir rendern den Text manuell im HTML, nicht im Bild (sauberer)
                     my_ean = ean_class(p.ean, writer=ImageWriter())
                     my_ean.write(buffer, options={"write_text": False, "module_height": 8.0, "quiet_zone": 1.0})
-                    
-                    # Base64 encodieren für Einbettung im HTML
                     image_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
-                    
-                    product_list.append({
-                        'name': p.name,
-                        'price': p.sales_price,
-                        'ean_text': p.ean,
-                        'category': p.category.name if p.category else "-",
-                        'barcode_image': f"data:image/png;base64,{image_base64}"
-                    })
-                    
-                except Exception as e:
-                    print(f"Fehler bei Barcode Generierung für {p.name}: {e}")
-                    # Produkt trotzdem listen, aber ohne Bild
-                    product_list.append({
-                        'name': p.name,
-                        'price': p.sales_price,
-                        'ean_text': p.ean,
-                        'category': p.category.name if p.category else "-",
-                        'barcode_image': None
-                    })
-
-            # PDF Generieren
-            context = {
-                'product_list': product_list,
-                'generation_date': timezone.now()
-            }
-            
+                    product_list.append({'name': p.name, 'price': p.sales_price, 'ean_text': p.ean, 'category': p.category.name if p.category else "-", 'barcode_image': f"data:image/png;base64,{image_base64}"})
+                except Exception:
+                    product_list.append({'name': p.name, 'price': p.sales_price, 'ean_text': p.ean, 'category': p.category.name if p.category else "-", 'barcode_image': None})
+            context = {'product_list': product_list, 'generation_date': timezone.now()}
             response = render_to_pdf('commerce/ean_label_pdf.html', context)
             if isinstance(response, HttpResponse) and response.status_code == 200:
                 filename = f"Scanliste_{timezone.now().strftime('%Y-%m-%d')}.pdf"
@@ -424,123 +403,46 @@ def ean_label_view(request):
                 return response
             else:
                 return HttpResponse("Fehler beim Generieren des PDFs", status=500)
-
     else:
         form = EanLabelForm()
-
     context = admin.site.each_context(request)
-    context.update({
-        'form': form,
-        'title': 'Scan-Liste / Etiketten drucken'
-    })
+    context.update({'form': form, 'title': 'Scan-Liste / Etiketten drucken'})
     return render(request, 'commerce/ean_label_form.html', context)
-
 
 @staff_member_required
 def mwst_report_view(request):
-    """
-    Generiert die MWST-Abrechnungshilfe (ESTV Konform).
-    """
     if request.method == 'POST':
         form = MwstReportForm(request.POST)
         if form.is_valid():
             start_date = form.cleaned_data['start_date']
             end_date = form.cleaned_data['end_date']
-
-            # --- 1. UMSATZ (Sales) ---
-            # Wir holen alle SaleItems im Zeitraum
-            sale_items = SaleItem.objects.filter(
-                sale__date__date__gte=start_date,
-                sale__date__date__lte=end_date
-            )
-
-            # Speicher für die Ziffern
-            ziffer_200_total = Decimal('0.00') # Total Umsatz
+            sale_items = SaleItem.objects.filter(sale__date__date__gte=start_date, sale__date__date__lte=end_date)
             
-            # Ziffer 303 (8.1%) und 302 (7.7% alt) - Normalsatz
-            norm_base = Decimal('0.00')
-            norm_tax = Decimal('0.00')
+            ziffer_200_total = Decimal('0.00')
+            norm_base = norm_tax = red_base = red_tax = spec_base = spec_tax = Decimal('0.00')
             
-            # Ziffer 313 (2.6%) und 312 (2.5% alt) - Reduziert
-            red_base = Decimal('0.00')
-            red_tax = Decimal('0.00')
-            
-            # Ziffer 343 (3.8%) - Beherbergung (falls relevant)
-            spec_base = Decimal('0.00')
-            spec_tax = Decimal('0.00')
-
             for item in sale_items:
-                # Brutto Total des Items
                 gross = item.total_price_gross
                 ziffer_200_total += gross
-                
                 rate = item.vat_rate or Decimal('0.00')
-                
-                # Rückrechnung Netto & Steuer
                 divisor = Decimal('1.00') + (rate / Decimal('100.00'))
                 net = gross / divisor
                 tax = gross - net
-
-                # Zuordnung zu den Ziffern basierend auf dem Satz
-                if rate >= Decimal('7.0'): # Normalsatz (8.1 oder 7.7)
-                    norm_base += net
-                    norm_tax += tax
-                elif rate >= Decimal('3.0'): # Sondersatz
-                    spec_base += net
-                    spec_tax += tax
-                elif rate > Decimal('0.0'): # Reduziert (2.6 oder 2.5)
-                    red_base += net
-                    red_tax += tax
-                # 0% wird ignoriert für Steuer, zählt aber zu Ziffer 200
-
-            # --- 2. VORSTEUER (Purchases) ---
-            # Nur empfangene Waren zählen als Vorsteuerabzug
-            purchase_items = PurchaseOrderItem.objects.filter(
-                order__date__gte=start_date,
-                order__date__lte=end_date,
-                order__status=PurchaseOrder.Status.RECEIVED
-            )
-
+                if rate >= Decimal('7.0'): norm_base += net; norm_tax += tax
+                elif rate >= Decimal('3.0'): spec_base += net; spec_tax += tax
+                elif rate > Decimal('0.0'): red_base += net; red_tax += tax
+            
+            purchase_items = PurchaseOrderItem.objects.filter(order__date__gte=start_date, order__date__lte=end_date, order__status=PurchaseOrder.Status.RECEIVED)
             ziffer_400_vorsteuer = Decimal('0.00')
-
             for p_item in purchase_items:
-                # Bei Purchase ist unit_price meist Netto (Einkaufspreis)
                 net = p_item.total_price
                 rate = p_item.vat_rate or Decimal('0.00')
-                
-                # Steuer berechnen (Netto * Satz)
-                tax_amt = net * (rate / Decimal('100.00'))
-                ziffer_400_vorsteuer += tax_amt
-
-            # --- 3. ABRECHNUNG ---
+                ziffer_400_vorsteuer += net * (rate / Decimal('100.00'))
+            
             total_geschuldete_steuer = norm_tax + red_tax + spec_tax
             ziffer_500_zahllast = total_geschuldete_steuer - ziffer_400_vorsteuer
             
-            context = {
-                'start_date': start_date,
-                'end_date': end_date,
-                'generation_date': timezone.now(),
-                
-                # Werte
-                'ziffer_200': ziffer_200_total,
-                'ziffer_289': Decimal('0.00'), # Abzüge (optional)
-                'ziffer_299': ziffer_200_total, # Steuerbarer Gesamtumsatz
-                
-                'norm_base': norm_base,
-                'norm_tax': norm_tax,
-                
-                'red_base': red_base,
-                'red_tax': red_tax,
-                
-                'spec_base': spec_base,
-                'spec_tax': spec_tax,
-                
-                'total_output_tax': total_geschuldete_steuer,
-                
-                'ziffer_400': ziffer_400_vorsteuer,
-                'ziffer_500': ziffer_500_zahllast,
-            }
-
+            context = {'start_date': start_date, 'end_date': end_date, 'generation_date': timezone.now(), 'ziffer_200': ziffer_200_total, 'ziffer_289': Decimal('0.00'), 'ziffer_299': ziffer_200_total, 'norm_base': norm_base, 'norm_tax': norm_tax, 'red_base': red_base, 'red_tax': red_tax, 'spec_base': spec_base, 'spec_tax': spec_tax, 'total_output_tax': total_geschuldete_steuer, 'ziffer_400': ziffer_400_vorsteuer, 'ziffer_500': ziffer_500_zahllast}
             response = render_to_pdf('commerce/mwst_report_pdf.html', context)
             if isinstance(response, HttpResponse) and response.status_code == 200:
                 filename = f"MWST_Abrechnung_{start_date}_{end_date}.pdf"
@@ -548,120 +450,8 @@ def mwst_report_view(request):
                 return response
             else:
                 return HttpResponse("Fehler beim Generieren des PDFs", status=500)
-
     else:
         form = MwstReportForm()
-
     context = admin.site.each_context(request)
-    context.update({
-        'form': form,
-        'title': 'MWST Abrechnungshilfe (ESTV)'
-    })
+    context.update({'form': form, 'title': 'MWST Abrechnungshilfe (ESTV)'})
     return render(request, 'commerce/mwst_report_form.html', context)
-
-
-@require_POST
-def api_checkout(request):
-    try:
-        data = json.loads(request.body)
-        items = data.get('items', [])
-        payment_method = data.get('payment_method', 'CASH')
-        customer_data = data.get('customer', None)
-
-        if not items:
-            return JsonResponse({'success': False, 'error': 'Warenkorb leer'})
-
-        # 1. Sale erstellen
-        # Wir übergeben den User (created_by), damit dieser im Audit-Log auftaucht
-        sale = Sale.objects.create(
-            date=timezone.now(),
-            payment_method=payment_method,
-            status=Sale.Status.COMPLETED,
-            created_by=request.user if request.user.is_authenticated else None
-        )
-
-        total_gross = Decimal('0.00')
-
-        # 2. Items hinzufügen
-        for item in items:
-            product = Product.objects.get(id=item['id'])
-            qty = int(item['qty'])
-            
-            # WICHTIG: Kein manueller Abzug (product.stock_quantity -= qty) hier!
-            # Das SaleItem Model kümmert sich in der save() Methode via product.adjust_stock()
-            # automatisch um den Abzug und den Audit-Log Eintrag.
-            # Da wir oben 'sale.created_by' gesetzt haben, wird auch der User korrekt übergeben.
-
-            # SaleItem erstellen
-            SaleItem.objects.create(
-                sale=sale,
-                product=product,
-                quantity=qty,
-                unit_price_gross=product.sales_price 
-            )
-
-            total_gross += (product.sales_price * qty)
-
-        # 3. Totals berechnen und speichern
-        sale.total_amount_gross = total_gross
-        
-        # Exakte Netto-Berechnung basierend auf den Items (da MwSt Sätze variieren können)
-        total_net = Decimal('0.00')
-        # Wir laden die items neu, damit wir die gespeicherten vat_rates haben
-        for s_item in sale.items.all():
-            vat_rate = s_item.vat_rate or Decimal('0.00')
-            # Rückrechnung: Brutto / (1 + vat_rate/100)
-            net_price = s_item.total_price_gross / (1 + vat_rate / 100)
-            total_net += net_price
-
-        sale.total_amount_net = round(total_net, 2)
-        sale.save()
-
-        # PDF URL Logic (Standard: Thermo-Bon)
-        pdf_url = f"/commerce/sale/{sale.id}/pdf/" 
-
-        # 4. Spezifische Logik für RECHNUNG
-        if payment_method == 'INVOICE' and customer_data:
-            success, info = send_invoice_email(sale, customer_data)
-            if not success:
-                print(f"Mail Error: {info}")
-            
-            # Optional: Link zum A4 PDF statt Bon
-            # pdf_url = f"/commerce/sale/{sale.id}/invoice-pdf/"
-
-        return JsonResponse({
-            'success': True, 
-            'sale_id': sale.id,
-            'pdf_url': pdf_url
-        })
-
-    except Exception as e:
-        return JsonResponse({'success': False, 'error': str(e)})
-
-def sale_invoice_pdf_view(request, sale_id):
-    """
-    NEU: View um die A4 Rechnung manuell herunterzuladen (via URL).
-    """
-    sale = get_object_or_404(Sale, id=sale_id)
-    
-    # Dummy Kunde für manuellen Nachdruck
-    customer_dummy = {
-        'first_name': 'Kunde',
-        'last_name': '(Nachdruck)',
-        'address': 'Musterstrasse 1',
-        'zip_code': '8000',
-        'city': 'Zürich',
-        'email': ''
-    }
-    
-    # QR Code generieren
-    qr_data = f"SPC\n0200\n\n\n\n\n\n\n\nRechnung {sale.id}\nCHF\n{sale.total_amount_gross}\n\n\n\n"
-    qr_svg = generate_qr_code_svg(qr_data)
-    
-    # PDF generieren
-    pdf_content = generate_invoice_pdf(sale, customer_dummy, qr_svg)
-    
-    # Als HTTP Response zurückgeben
-    response = HttpResponse(pdf_content, content_type='application/pdf')
-    response['Content-Disposition'] = f'inline; filename="Rechnung_{sale.id}.pdf"'
-    return response

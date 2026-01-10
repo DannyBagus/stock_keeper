@@ -20,7 +20,7 @@ class SaleItemInline(admin.TabularInline):
     extra = 1
     autocomplete_fields = ['product']
     formset = SaleItemFormSet
-    fields = ('product', 'quantity', 'unit_price_gross')
+    fields = ('product', 'quantity', 'unit_price_gross', 'vat_rate')
 
 # --- Purchase Order Admin ---
 
