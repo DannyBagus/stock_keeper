@@ -2,6 +2,11 @@
 {% load static %}
 
 {% block extrahead %}
+<!-- EXTERNE STYLES FÜR POS LAYOUT (Bootstrap & FontAwesome) -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+
+<!-- EXTERNE SKRIPTE -->
 <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
 <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.3/dist/cdn.min.js"></script>
 
@@ -31,6 +36,12 @@
                 this.restoreState();
                 this.$nextTick(() => this.focusSearch());
                 this.$watch('cart', () => { this.saveState(this.paymentMethod); });
+            },
+
+            // --- HELPER ---
+            getUniqueId() {
+                // Erzeugt eine eindeutige ID für das Frontend-Rendering (verhindert Key-Kollisionen)
+                return Date.now().toString(36) + Math.random().toString(36).substr(2);
             },
 
             // --- UI ACTIONS ---
@@ -90,13 +101,10 @@
 
             // --- NEU: DIVERSES LOGIK ---
             async openDiversesModal() {
-                // Wir suchen das "Diverses" Produkt via API anhand der SKU 'DIVERSES'
-                // Dies stellt sicher, dass wir eine gültige ID für das Backend haben.
                 try {
                     const res = await fetch(`/commerce/api/search/?q=DIVERSES`);
                     const data = await res.json();
                     
-                    // Finde exakten Match auf SKU
                     const diversesProd = data.results.find(p => p.sku === 'DIVERSES');
                     
                     if (!diversesProd) {
@@ -105,10 +113,9 @@
                     }
                     
                     this.diversesProduct = diversesProd;
-                    this.diversesPrice = ''; // Reset Input
+                    this.diversesPrice = ''; 
                     this.showDiversesModal = true;
                     
-                    // Fokus auf das Input Feld setzen
                     this.$nextTick(() => {
                         const input = document.getElementById('diverses-price-input');
                         if (input) input.focus();
@@ -126,15 +133,15 @@
                 
                 const price = parseFloat(this.diversesPrice);
                 
-                // Wir fügen das Produkt hinzu, aber mit custom_price Attribut
-                // Diverses wird immer als einzelne Position hinzugefügt, um Konflikte zu vermeiden
+                // Diverses wird immer als einzelne Position hinzugefügt
                 this.cart.push({ 
+                    cart_id: this.getUniqueId(), // EINDEUTIGE ID FÜR FRONTEND
                     id: this.diversesProduct.id, 
-                    name: 'Diverses', // Oder this.diversesProduct.name
-                    price: price, // Für Anzeige im Frontend
+                    name: 'Diverses', 
+                    price: price, 
                     ean: '', 
                     qty: 1,
-                    custom_price: price // Wichtig: Wird ans Backend gesendet
+                    custom_price: price 
                 });
                 
                 this.showNotification(`Diverses ${this.formatMoney(price)} hinzugefügt`);
@@ -144,13 +151,14 @@
             },
 
             addToCart(product) {
-                // Check if item exists (aber nur, wenn es kein custom_price item ist)
+                // Prüfen ob Item existiert (nur normale Items ohne custom_price zusammenfassen)
                 const existingItem = this.cart.find(item => item.id === product.id && !item.custom_price);
                 
                 if (existingItem) { 
                     existingItem.qty++; 
                 } else { 
                     this.cart.push({ 
+                        cart_id: this.getUniqueId(), // EINDEUTIGE ID FÜR FRONTEND
                         id: product.id, 
                         name: product.name, 
                         price: product.price, 
@@ -182,7 +190,13 @@
                         const savedCart = JSON.parse(localStorage.getItem('pos_cart'));
                         const savedMethod = localStorage.getItem('pos_payment_method');
                         if (savedCart && Array.isArray(savedCart)) {
-                            this.cart = savedCart; this.paymentMethod = savedMethod || 'CASH';
+                            // Migration: Falls alte Carts keine cart_id haben, generieren wir eine
+                            this.cart = savedCart.map(item => ({
+                                ...item, 
+                                cart_id: item.cart_id || this.getUniqueId() 
+                            }));
+                            
+                            this.paymentMethod = savedMethod || 'CASH';
                             if (this.paymentMethod === 'SUMUP' && this.cart.length > 0) { this.showCheckoutModal = true; this.showNotification('Wiederhergestellt.', 'info'); }
                         }
                     } catch (e) {}
@@ -207,7 +221,6 @@
             },
 
             validateInvoiceForm() {
-                // Einfache Validierung der Pflichtfelder
                 if (!this.customer.first_name || !this.customer.last_name || 
                     !this.customer.address || !this.customer.zip_code || 
                     !this.customer.city || !this.customer.email) {
@@ -217,7 +230,6 @@
             },
 
             async confirmCheckout() {
-                // Validierung bei Rechnung
                 if (this.paymentMethod === 'INVOICE') {
                     if (!this.validateInvoiceForm()) {
                         this.showNotification('Bitte alle Pflichtfelder ausfüllen!', 'warning');
@@ -234,17 +246,13 @@
                         body: JSON.stringify({ 
                             items: this.cart, 
                             payment_method: this.paymentMethod,
-                            // Kundendaten mitsenden (nur relevant bei INVOICE, schadet sonst aber nicht)
                             customer: this.customer 
                         }) 
                     });
                     const result = await response.json();
                     if (result.success) {
                         this.clearState(); this.cart = []; this.createdSaleId = result.sale_id; this.createdPdfUrl = result.pdf_url;
-                        
-                        // Kundendaten resetten
                         this.customer = { first_name: '', last_name: '', address: '', zip_code: '', city: '', email: '' };
-                        
                         this.showCheckoutModal = false; this.showSuccessModal = true;
                     } else { this.showNotification('Fehler: ' + result.error, 'error'); this.showCheckoutModal = false; }
                 } catch (err) { this.showNotification('Netzwerkfehler', 'error'); } finally { this.isLoading = false; }
@@ -262,7 +270,7 @@
     #reader video { object-fit: cover; border-radius: 8px; }
     .scanner-controls { background: #f8f9fa; padding: 10px; border-radius: 0 0 8px 8px; border: 1px solid #ddd; border-top: none; margin-bottom: 15px; }
     .zoom-slider { width: 100%; }
-    .search-box { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; border-left: 4px solid #1cc88a; } /* Grün für POS */
+    .search-box { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; border-left: 4px solid #1cc88a; } 
     .product-list { list-style: none; padding: 0; margin: 0; max-height: 200px; overflow-y: auto; border: 1px solid #eee; display: none; }
     .product-list.active { display: block; }
     .product-list li { padding: 12px; border-bottom: 1px solid #eee; cursor: pointer; transition: background 0.1s; }
@@ -273,33 +281,17 @@
     .modal-box { background: white; border-radius: 8px; width: 90%; max-width: 500px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); overflow: hidden; animation: fadeIn 0.2s ease-out; max-height: 90vh; overflow-y: auto; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
 
-    /* TOAST STYLES (Angepasst für Top-Positionierung) */
     .toast-notification { 
-        position: fixed; 
-        top: 80px; /* Nach oben verschoben, unterhalb der Navbar */
-        right: 20px; 
-        padding: 15px 25px; 
-        border-radius: 8px; 
-        color: white; 
-        font-weight: bold; 
-        box-shadow: 0 4px 12px rgba(0,0,0,0.2); 
-        z-index: 10000; 
-        display: flex; 
-        align-items: center; 
-        gap: 10px; 
-        /* Animation: Slide In von Oben */
-        animation: slideInDown 0.3s ease-out; 
-        max-width: 90%; 
+        position: fixed; top: 80px; right: 20px; padding: 15px 25px; border-radius: 8px; color: white; font-weight: bold; 
+        box-shadow: 0 4px 12px rgba(0,0,0,0.2); z-index: 10000; display: flex; align-items: center; gap: 10px; 
+        animation: slideInDown 0.3s ease-out; max-width: 90%; 
     }
     .toast-success { background-color: #28a745; } 
     .toast-error { background-color: #dc3545; } 
     .toast-info { background-color: #17a2b8; } 
     .toast-warning { background-color: #ffc107; color: #333; }
     
-    @keyframes slideInDown { 
-        from { transform: translateY(-50px); opacity: 0; } 
-        to { transform: translateY(0); opacity: 1; } 
-    }
+    @keyframes slideInDown { from { transform: translateY(-50px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 </style>
 {% endblock %}
 
@@ -522,7 +514,8 @@
                                 </tr>
                             </thead>
                             <tbody>
-                                <template x-for="(item, index) in cart" :key="item.id + (item.custom_price ? '_cust' : '')">
+                                <!-- KEY FIX: Verwendung von item.cart_id für eindeutige Keys -->
+                                <template x-for="(item, index) in cart" :key="item.cart_id">
                                     <tr>
                                         <td>
                                             <span x-text="item.name"></span>
