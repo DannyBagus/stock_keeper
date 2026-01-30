@@ -9,7 +9,9 @@ from datetime import date
 from decimal import Decimal 
 
 import segno
-from django.core.mail import EmailMessage
+# WICHTIG: EmailMultiAlternatives für Text+HTML Versand (bessere Zustellbarkeit bei Providern wie Bluewin)
+from django.core.mail import EmailMultiAlternatives
+from django.utils.html import strip_tags
 from django.utils import timezone
 from weasyprint import HTML, CSS
 
@@ -259,6 +261,7 @@ def generate_invoice_pdf(sale, customer_data, qr_svg=None):
 def send_invoice_email(sale, customer_data):
     """
     Hauptfunktion: Generiert QR & PDF und sendet die E-Mail.
+    NEU: Nutzt EmailMultiAlternatives für bessere Zustellbarkeit (Text + HTML).
     """
     try:
         # 1. QR Payload generieren
@@ -268,32 +271,45 @@ def send_invoice_email(sale, customer_data):
         # 2. PDF generieren
         pdf_content = generate_invoice_pdf(sale, customer_data, qr_svg)
 
-        # 3. E-Mail Body rendern
-        email_body = render_to_string('commerce/invoice_mail.html', {
+        # 3. E-Mail Inhalte vorbereiten
+        subject = f'Rechnung #{sale.id} - Mileja GmbH'
+        
+        # Sauberer Absender Name mit Fallback
+        from_email = f"Mileja GmbH <{settings.DEFAULT_FROM_EMAIL}>"
+        
+        # FIX: Leerzeichen entfernen (Trim) für maximale Sicherheit
+        recipient = customer_data['email'].strip()
+        to_email = [recipient]
+        cc_email = ['info@mileja.ch']
+
+        # HTML Body rendern
+        html_content = render_to_string('commerce/invoice_mail.html', {
             'sale': sale,
             'customer': customer_data
         })
+        
+        # Text Body aus HTML extrahieren (Fallback für Spam-Filter)
+        text_content = strip_tags(html_content)
 
-        # 4. E-Mail konfigurieren
-        subject = f'Rechnung #{sale.id} - Mileja GmbH'
-        to_email = [customer_data['email']]
-        cc_email = ['info@mileja.ch']
-
-        email = EmailMessage(
+        # 4. E-Mail Objekt erstellen (Multipart)
+        # Dies erhöht die Zustellwahrscheinlichkeit massiv, da reine HTML-Mails oft blockiert werden
+        msg = EmailMultiAlternatives(
             subject,
-            email_body,
-            settings.DEFAULT_FROM_EMAIL,
+            text_content, # Plain Text version als Default
+            from_email,
             to_email,
-            cc=cc_email,
+            cc=cc_email
         )
-        email.content_subtype = "html"
+        
+        # HTML Version hinzufügen
+        msg.attach_alternative(html_content, "text/html")
 
         # 5. PDF anhängen
         filename = f"Rechnung_{sale.id}.pdf"
-        email.attach(filename, pdf_content, 'application/pdf')
+        msg.attach(filename, pdf_content, 'application/pdf')
 
         # 6. Senden
-        email.send()
+        msg.send()
         return True, "Gesendet"
 
     except Exception as e:
