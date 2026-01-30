@@ -235,6 +235,10 @@
                         this.showNotification('Bitte alle Pflichtfelder ausfüllen!', 'warning');
                         return;
                     }
+                    // FIX: Leerzeichen entfernen (Trim), damit keine "User unknown" Fehler entstehen
+                    if (this.customer.email) {
+                        this.customer.email = this.customer.email.trim();
+                    }
                 }
 
                 this.isLoading = true;

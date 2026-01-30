@@ -149,6 +149,10 @@ def api_checkout(request):
 
         # 4. Spezifische Logik für RECHNUNG
         if payment_method == 'INVOICE' and customer_data:
+            # CLEANING: Leerzeichen entfernen
+            if 'email' in customer_data:
+                customer_data['email'] = customer_data['email'].strip()
+                
             success, info = send_invoice_email(sale, customer_data)
             if not success:
                 print(f"Mail Error: {info}")
