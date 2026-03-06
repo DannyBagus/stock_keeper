@@ -186,7 +186,8 @@ JAZZMIN_SETTINGS = {
             
             # 2. REPORTING (NEU)
             {"name": "Inventarliste (Bilanz)", "url": "inventory_report", "icon": "fas fa-file-invoice-dollar text-info", "permissions": ["auth.view_user"]},
-            
+            {"name": "Shopify Export (CSV)", "url": "shopify_export", "icon": "fas fa-file-export text-success", "permissions": ["auth.view_user"]},
+
             # 3. STAMMDATEN
             {"name": "Produkte", "url": "admin:core_product_changelist", "icon": "fas fa-box-open", "permissions": ["core.view_product"]},
             {"name": "Kategorien", "url": "admin:core_category_changelist", "icon": "fas fa-tags", "permissions": ["core.view_category"]},

@@ -9,6 +9,9 @@ urlpatterns = [
     # Reports
     path('inventory-report/', views.inventory_report_view, name='inventory_report'), 
 
+    # Export
+    path('export/shopify/', views.shopify_export, name='shopify_export'),
+
     # API
     path('api/inventory-correct/', views.api_inventory_correct, name='api_inventory_correct'),
 ]

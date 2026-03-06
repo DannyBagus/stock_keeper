@@ -6,9 +6,11 @@ from django.db import transaction
 from django.db.models import Sum, Count, F, ExpressionWrapper, DecimalField, OuterRef, Subquery
 from django.db.models.functions import TruncMonth, Coalesce
 from django.utils import timezone
+from django.utils.text import slugify
 from django.views.decorators.http import require_POST
 from django.http import JsonResponse, HttpResponse
 from decimal import Decimal
+import csv
 import json
 from .models import Product, Category, StockMovement
 from .forms import InventoryReportForm
@@ -214,3 +216,114 @@ def inventory_report_view(request):
         'title': 'Inventarliste (Bilanz)'
     })
     return render(request, 'core/inventory_report_form.html', context)
+
+
+SHOPIFY_HEADERS = [
+    'Title', 'URL handle', 'Description', 'Vendor', 'Product category', 'Type', 'Tags',
+    'Published on online store', 'Status', 'SKU', 'Barcode',
+    'Option1 name', 'Option1 value', 'Option1 Linked To',
+    'Option2 name', 'Option2 value', 'Option2 Linked To',
+    'Option3 name', 'Option3 value', 'Option3 Linked To',
+    'Price', 'Compare-at price', 'Cost per item', 'Charge tax', 'Tax code',
+    'Unit price total measure', 'Unit price total measure unit',
+    'Unit price base measure', 'Unit price base measure unit',
+    'Inventory tracker', 'Inventory quantity', 'Continue selling when out of stock',
+    'Weight value (grams)', 'Weight unit for display', 'Requires shipping', 'Fulfillment service',
+    'Product image URL', 'Image position', 'Image alt text', 'Variant image URL',
+    'Gift card', 'SEO title', 'SEO description',
+    'Color (product.metafields.shopify.color-pattern)',
+    'Google Shopping / Google product category', 'Google Shopping / Gender',
+    'Google Shopping / Age group', 'Google Shopping / Manufacturer part number (MPN)',
+    'Google Shopping / Ad group name', 'Google Shopping / Ads labels',
+    'Google Shopping / Condition', 'Google Shopping / Custom product',
+    'Google Shopping / Custom label 0', 'Google Shopping / Custom label 1',
+    'Google Shopping / Custom label 2', 'Google Shopping / Custom label 3',
+    'Google Shopping / Custom label 4',
+]
+
+
+@staff_member_required
+def shopify_export(request):
+    today = timezone.now().date()
+    filename = f"shopify_export_{today}.csv"
+
+    response = HttpResponse(content_type='text/csv; charset=utf-8-sig')
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    response.write('\ufeff')  # BOM for Excel compatibility
+
+    writer = csv.writer(response)
+    writer.writerow(SHOPIFY_HEADERS)
+
+    products = Product.objects.filter(is_active=True).select_related('category', 'supplier')
+
+    for product in products:
+        vendor = product.supplier.name if product.supplier else ''
+        category_name = product.category.name if product.category else ''
+
+        has_size = bool(product.size)
+        has_color = bool(product.color)
+
+        if has_size:
+            opt1_name, opt1_value = 'Size', product.size
+            opt2_name = 'Color' if has_color else ''
+            opt2_value = product.color if has_color else ''
+        elif has_color:
+            opt1_name, opt1_value = 'Color', product.color
+            opt2_name, opt2_value = '', ''
+        else:
+            opt1_name = opt1_value = opt2_name = opt2_value = ''
+
+        image_url = request.build_absolute_uri(product.image.url) if product.image else ''
+        seo_description = product.description[:160] if product.description else ''
+        inventory_tracker = 'shopify' if product.track_stock else ''
+
+        row = [
+            product.name,           # Title
+            slugify(product.name),  # URL handle
+            product.description,    # Description
+            vendor,                 # Vendor
+            category_name,          # Product category
+            category_name,          # Type
+            category_name,          # Tags
+            'TRUE',                 # Published on online store
+            'Active',               # Status
+            product.sku,            # SKU
+            product.ean,            # Barcode
+            opt1_name,              # Option1 name
+            opt1_value,             # Option1 value
+            '',                     # Option1 Linked To
+            opt2_name,              # Option2 name
+            opt2_value,             # Option2 value
+            '',                     # Option2 Linked To
+            '',                     # Option3 name
+            '',                     # Option3 value
+            '',                     # Option3 Linked To
+            product.sales_price,    # Price
+            '',                     # Compare-at price
+            product.cost_price,     # Cost per item
+            'TRUE',                 # Charge tax
+            '',                     # Tax code
+            '',                     # Unit price total measure
+            '',                     # Unit price total measure unit
+            '',                     # Unit price base measure
+            '',                     # Unit price base measure unit
+            inventory_tracker,      # Inventory tracker
+            product.stock_quantity, # Inventory quantity
+            'DENY',                 # Continue selling when out of stock
+            '',                     # Weight value (grams)
+            'g',                    # Weight unit for display
+            'TRUE',                 # Requires shipping
+            'manual',               # Fulfillment service
+            image_url,              # Product image URL
+            '1' if image_url else '', # Image position
+            product.name if image_url else '', # Image alt text
+            '',                     # Variant image URL
+            'FALSE',                # Gift card
+            product.name,           # SEO title
+            seo_description,        # SEO description
+            '',                     # Color metafield
+            '', '', '', '', '', '', '', '', '', '', '', '', '',  # Google Shopping fields
+        ]
+        writer.writerow(row)
+
+    return response
