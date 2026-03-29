@@ -33,3 +33,6 @@ EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 
 # Shopify API Key
 SHOPIFY_WEBHOOK_SECRET = os.environ.get('SHOPIFY_WEBHOOK_SECRET', '')
+
+# SumUp API Key
+SUMUP_API_KEY = os.getenv('SUMUP_API_KEY', '')

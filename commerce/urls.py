@@ -14,6 +14,7 @@ urlpatterns = [
     path('api/search/', views.api_search_product, name='api_product_search'),
     # Hier läuft unsere erweiterte Checkout-Logik drüber:
     path('api/checkout/', views.api_checkout, name='api_pos_checkout'),
+    path('api/verify-sumup/', views.api_verify_sumup_payment, name='api_verify_sumup'),
     path('api/purchase-checkout/', views.api_purchase_checkout, name='api_purchase_checkout'),
     
     # PDF & Webhooks

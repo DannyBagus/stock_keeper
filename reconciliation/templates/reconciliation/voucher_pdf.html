@@ -1,0 +1,205 @@
+{% load static %}
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SumUp Buchungsbeleg</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 2cm;
+            @frame footer {
+                -pdf-frame-content: footer-content;
+                bottom: 0cm;
+                margin-left: 2cm;
+                margin-right: 2cm;
+                height: 1cm;
+            }
+        }
+        body {
+            font-family: Helvetica, sans-serif;
+            font-size: 10pt;
+            color: #333;
+        }
+        .header-table { width: 100%; margin-bottom: 20px; border: none; }
+        .logo-cell { width: 50%; font-size: 20pt; font-weight: bold; color: #aa8684; vertical-align: top; }
+        .meta-cell { width: 50%; text-align: right; font-size: 9pt; color: #555; vertical-align: top; }
+
+        h1 { color: #aa8684; font-size: 16pt; margin-bottom: 5px; }
+        h2 { color: #333; font-size: 12pt; margin-top: 20px; border-bottom: 1px solid #aa8684; padding-bottom: 5px; }
+
+        .period-info {
+            font-size: 9pt;
+            color: #555;
+            margin-bottom: 20px;
+            border: 1px solid #eee;
+            padding: 10px;
+            background-color: #f9f9f9;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+            font-size: 9pt;
+        }
+
+        th {
+            border-bottom: 1px solid #aa8684;
+            text-align: left;
+            padding: 4px;
+            font-weight: bold;
+            color: #aa8684;
+        }
+
+        td {
+            border-bottom: 1px solid #eee;
+            padding: 4px;
+            vertical-align: top;
+        }
+
+        .text-right { text-align: right; }
+        .text-bold { font-weight: bold; }
+        .total-row td { border-top: 2px solid #aa8684; font-weight: bold; }
+        .buchung-row td { padding: 6px 4px; font-size: 10pt; }
+        .note { font-size: 8pt; color: #777; margin-top: 10px; }
+        .badge-ok { color: #28a745; }
+        .badge-warn { color: #ffc107; }
+        .badge-err { color: #dc3545; }
+    </style>
+</head>
+<body>
+
+<!-- Header -->
+<table class="header-table">
+    <tr>
+        <td class="logo-cell">SupportElle <span style="font-size: 10pt; color: #555;">by Mileja</span></td>
+        <td class="meta-cell">
+            <strong>SumUp Buchungsbeleg</strong><br>
+            Erstellt: {% now "d.m.Y" %}<br>
+            Periode: {{ payout.period_label }}
+        </td>
+    </tr>
+</table>
+
+<h1>Buchungsbeleg SumUp-Abrechnung</h1>
+
+<div class="period-info">
+    <strong>Bankgutschrift:</strong> CHF {{ payout.bank_credit_amount }} am {{ payout.bank_credit_date|date:"d.m.Y" }}<br>
+    <strong>Abrechnungsperiode:</strong> {{ payout.period_label }}<br>
+    <strong>SumUp Nettobetrag:</strong> CHF {{ payout.sumup_net_amount|default_if_none:"–" }}
+    {% if payout.delta %}
+    &nbsp;|&nbsp; <strong>Differenz Bank/SumUp:</strong> CHF {{ payout.delta }}
+    {% endif %}
+</div>
+
+<!-- Buchungssätze -->
+<h2>Buchungssätze</h2>
+<table>
+    <thead>
+        <tr>
+            <th>Soll</th>
+            <th>Haben</th>
+            <th>Text</th>
+            <th class="text-right">Betrag (CHF)</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% if laden_total %}
+        <tr class="buchung-row">
+            <td>1020 Bank</td>
+            <td>3000 Warenertrag Laden</td>
+            <td>SumUp Kartenumsatz Laden {{ payout.period_start|date:"m/Y" }}</td>
+            <td class="text-right">{{ laden_total }}</td>
+        </tr>
+        {% endif %}
+        {% if cafe_total %}
+        <tr class="buchung-row">
+            <td>1020 Bank</td>
+            <td>3000 Warenertrag Café</td>
+            <td>SumUp Kartenumsatz Café {{ payout.period_start|date:"m/Y" }}</td>
+            <td class="text-right">{{ cafe_total }}</td>
+        </tr>
+        {% endif %}
+        {% if total_fees %}
+        <tr class="buchung-row">
+            <td>6800 SumUp-Gebühren</td>
+            <td>1020 Bank</td>
+            <td>SumUp Transaktionsgebühren {{ payout.period_start|date:"m/Y" }}</td>
+            <td class="text-right">{{ total_fees }}</td>
+        </tr>
+        {% endif %}
+    </tbody>
+</table>
+
+<!-- Zusammenfassung -->
+<h2>Abgleich-Zusammenfassung</h2>
+<table>
+    <tr>
+        <td>Abgeglichene Transaktionen</td>
+        <td class="text-right badge-ok">{{ matched_count }}</td>
+    </tr>
+    <tr>
+        <td>Offene Diskrepanzen</td>
+        <td class="text-right {% if discrepancy_count > 0 %}badge-err{% else %}badge-ok{% endif %}">{{ discrepancy_count }}</td>
+    </tr>
+    <tr>
+        <td>Bruttoumsatz (Laden + Café)</td>
+        <td class="text-right text-bold">CHF {{ payout.sumup_gross_amount|default_if_none:"–" }}</td>
+    </tr>
+    <tr>
+        <td>Laden (Supportelle)</td>
+        <td class="text-right">CHF {{ laden_total }}</td>
+    </tr>
+    <tr>
+        <td>Café</td>
+        <td class="text-right">CHF {{ cafe_total }}</td>
+    </tr>
+    <tr>
+        <td>Abzüglich SumUp-Gebühren</td>
+        <td class="text-right">CHF {{ total_fees }}</td>
+    </tr>
+    <tr class="total-row">
+        <td>Nettobetrag (= Bankgutschrift)</td>
+        <td class="text-right">CHF {{ net_amount }}</td>
+    </tr>
+</table>
+
+<!-- Gebühren-Aufstellung -->
+<h2>Gebührenaufstellung</h2>
+<table>
+    <thead>
+        <tr>
+            <th>Datum</th>
+            <th>Txn-Code</th>
+            <th class="text-right">Umsatz (CHF)</th>
+            <th class="text-right">Gebühr (CHF)</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for item in items %}
+        {% if item.sumup_fee %}
+        <tr>
+            <td>{{ item.sumup_timestamp|date:"d.m.Y H:i" }}</td>
+            <td>{{ item.sumup_tx_code }}</td>
+            <td class="text-right">{{ item.sumup_amount }}</td>
+            <td class="text-right">{{ item.sumup_fee }}</td>
+        </tr>
+        {% endif %}
+        {% endfor %}
+    </tbody>
+</table>
+
+<p class="note">
+    Dieser Beleg wurde automatisch erstellt durch Stock Keeper (Reconciliation-Modul).
+    Alle Beträge in CHF.
+</p>
+
+<!-- Footer -->
+<div id="footer-content">
+    <p style="font-size: 7pt; color: #999; text-align: center;">
+        SupportElle by Mileja GmbH &mdash; SumUp Abgleich {{ payout.period_label }}
+    </p>
+</div>
+
+</body>
+</html>

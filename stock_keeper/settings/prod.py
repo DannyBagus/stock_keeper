@@ -1,5 +1,8 @@
 from .base import *
 import os
+from dotenv import load_dotenv
+
+load_dotenv()  # Lädt .env.prod Variablen die nicht bereits in os.environ sind
 
 # --- Production specific settings ---
 
@@ -64,6 +67,9 @@ DATABASES = {
 
 # Shopify API Key
 SHOPIFY_WEBHOOK_SECRET = os.environ.get('SHOPIFY_WEBHOOK_SECRET', '')
+
+# SumUp API Key
+SUMUP_API_KEY = os.environ.get('SUMUP_API_KEY', '')
 
 # Send Mail settings
 EMAIL_HOST = 'mail.infomaniak.com'

@@ -12,6 +12,7 @@ urlpatterns = [
     # Apps einbinden
     path('core/', include('core.urls')),
     path('commerce/', include('commerce.urls')), # NEU: Commerce URLs
+    path('reconciliation/', include('reconciliation.urls')),
 ]
 
 # --- MEDIEN DATEIEN IN PROD ---

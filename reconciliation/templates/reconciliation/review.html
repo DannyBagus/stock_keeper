@@ -1,0 +1,412 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block extrahead %}
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.3/dist/cdn.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="col-12" x-data="reconciliationReview()">
+
+    {% if messages %}
+    <div class="mb-3">
+        {% for message in messages %}
+        <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
+            {{ message }}
+            <button type="button" class="close" data-dismiss="alert"><span>&times;</span></button>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Header -->
+    <div class="card card-primary card-outline mb-3">
+        <div class="card-header">
+            <h3 class="card-title">
+                <i class="fas fa-balance-scale mr-2"></i>
+                Abgleich: {{ payout.bank_credit_date|date:"d.m.Y" }} &mdash; CHF {{ payout.bank_credit_amount }}
+            </h3>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-4">
+                    <strong>Abrechnungsperiode:</strong> {{ payout.period_label }}
+                </div>
+                <div class="col-md-4">
+                    <strong>SumUp Netto:</strong> CHF {{ payout.sumup_net_amount|default_if_none:"–" }}
+                </div>
+                <div class="col-md-4">
+                    <strong>SumUp Gebühren:</strong> CHF {{ payout.sumup_fees_amount|default_if_none:"–" }}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Zusammenfassung -->
+    <div class="row mb-3">
+        <div class="col-md-3">
+            <div class="small-box bg-success">
+                <div class="inner">
+                    <h3>{{ matched_count }}</h3>
+                    <p>Abgeglichen</p>
+                </div>
+                <div class="icon"><i class="fas fa-check"></i></div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="small-box bg-warning">
+                <div class="inner">
+                    <h3>{{ only_sumup_count }}</h3>
+                    <p>Nur SumUp</p>
+                </div>
+                <div class="icon"><i class="fas fa-exclamation-triangle"></i></div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="small-box bg-warning">
+                <div class="inner">
+                    <h3>{{ only_sk_count }}</h3>
+                    <p>Nur SK</p>
+                </div>
+                <div class="icon"><i class="fas fa-question-circle"></i></div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="small-box bg-danger">
+                <div class="inner">
+                    <h3>{{ gap_count }}</h3>
+                    <p>Differenz</p>
+                </div>
+                <div class="icon"><i class="fas fa-times-circle"></i></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Umsatz-Split -->
+    <div class="row mb-3">
+        <div class="col-md-4">
+            <div class="info-box">
+                <span class="info-box-icon bg-info"><i class="fas fa-store"></i></span>
+                <div class="info-box-content">
+                    <span class="info-box-text">Laden (Supportelle)</span>
+                    <span class="info-box-number">CHF {{ laden_total }}</span>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="info-box">
+                <span class="info-box-icon bg-info"><i class="fas fa-coffee"></i></span>
+                <div class="info-box-content">
+                    <span class="info-box-text">Café</span>
+                    <span class="info-box-number">CHF {{ cafe_total }}</span>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="info-box">
+                <span class="info-box-icon bg-secondary"><i class="fas fa-money-bill"></i></span>
+                <div class="info-box-content">
+                    <span class="info-box-text">SumUp Gebühren</span>
+                    <span class="info-box-number">CHF {{ total_fees }}</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Transaktions-Tabelle -->
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">Transaktionen</h3>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-sm table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th style="width:30px;">
+                                <input type="checkbox" @change="toggleAll($event.target.checked)" title="Alle auswählen">
+                            </th>
+                            <th>Datum</th>
+                            <th>SK Sale</th>
+                            <th>Erfasst von</th>
+                            <th class="text-right">SK Betrag</th>
+                            <th class="text-right">SumUp Betrag</th>
+                            <th class="text-right">Gebühr</th>
+                            <th>Match</th>
+                            <th>Kanal</th>
+                            <th>Status</th>
+                            <th>Aktion</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in items %}
+                        <tr class="{% if item.match_status == 'MATCHED' %}table-success{% elif item.match_status == 'GAP' %}table-danger{% elif item.match_status == 'ONLY_SUMUP' or item.match_status == 'ONLY_SK' %}table-warning{% endif %}"
+                            id="item-row-{{ item.pk }}">
+                            <td>
+                                {% if item.match_status == 'ONLY_SK' and item.sale and item.resolution == 'PENDING' %}
+                                <input type="checkbox" class="sel-cb"
+                                       data-item="{{ item.pk }}"
+                                       data-sale="{{ item.sale.pk }}"
+                                       data-amount="{{ item.sk_amount }}"
+                                       @click="toggleItem({{ item.pk }}, {{ item.sale.pk }}, '{{ item.sk_amount }}', $event.target.checked)">
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if item.sumup_timestamp %}
+                                    {{ item.sumup_timestamp|date:"d.m.Y H:i" }}
+                                {% elif item.sk_timestamp %}
+                                    {{ item.sk_timestamp|date:"d.m.Y H:i" }}
+                                {% else %}
+                                    –
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if item.sale %}
+                                    <a href="/admin/commerce/sale/{{ item.sale.pk }}/change/" target="_blank">#{{ item.sale.pk }}</a>
+                                {% else %}
+                                    –
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if item.sale and item.sale.created_by %}
+                                    {{ item.sale.created_by.get_full_name|default:item.sale.created_by.username }}
+                                {% else %}
+                                    <span class="text-muted">–</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-right">{{ item.sk_amount|default_if_none:"–" }}</td>
+                            <td class="text-right">{{ item.sumup_amount|default_if_none:"–" }}</td>
+                            <td class="text-right">{{ item.sumup_fee|default_if_none:"–" }}</td>
+                            <td>
+                                {% if item.match_tier == 'EXACT' %}
+                                    <span class="badge badge-success" title="Exakt">T1</span>
+                                {% elif item.match_tier == 'AMOUNT_TIME' %}
+                                    <span class="badge badge-info" title="Betrag + Zeit">T2</span>
+                                {% elif item.match_tier == 'AMOUNT_DATE' %}
+                                    <span class="badge badge-secondary" title="Betrag + Tag">T3</span>
+                                {% else %}
+                                    <span class="badge badge-danger" title="Kein Match">–</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if item.channel == 'LADEN' %}
+                                    <span class="badge badge-primary">Laden</span>
+                                {% elif item.channel == 'CAFE' %}
+                                    <span class="badge badge-info">Café</span>
+                                {% else %}
+                                    <span class="badge badge-light">?</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span id="resolution-{{ item.pk }}">
+                                    {% if item.resolution == 'PENDING' %}
+                                        <span class="text-muted">Ausstehend</span>
+                                    {% elif item.resolution == 'ACCEPTED' %}
+                                        <span class="text-success">Akzeptiert</span>
+                                    {% else %}
+                                        <span class="text-info">{{ item.get_resolution_display }}</span>
+                                    {% endif %}
+                                </span>
+                            </td>
+                            <td>
+                                {% if item.match_status != 'MATCHED' and item.resolution == 'PENDING' %}
+                                    {% if item.match_status == 'ONLY_SK' %}
+                                    <button class="btn btn-xs btn-outline-warning"
+                                            @click="resolveItem({{ item.pk }}, 'PAYMENT_TYPE_CHANGED', 'CASH')"
+                                            title="Zahlungsart auf Bar ändern">
+                                        <i class="fas fa-coins"></i> Bar
+                                    </button>
+                                    <button class="btn btn-xs btn-outline-info"
+                                            @click="resolveItem({{ item.pk }}, 'PAYMENT_TYPE_CHANGED', 'INVOICE')"
+                                            title="Zahlungsart auf Rechnung ändern">
+                                        <i class="fas fa-file-invoice"></i> Rechnung
+                                    </button>
+                                    {% if item.sale %}
+                                    <button class="btn btn-xs btn-outline-danger"
+                                            @click="confirmDeleteSale([{itemPk: {{ item.pk }}, saleId: {{ item.sale.pk }}, amount: '{{ item.sk_amount }}'}])"
+                                            title="Sale stornieren">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                    {% endif %}
+                                    {% elif item.match_status == 'ONLY_SUMUP' %}
+                                    <button class="btn btn-xs btn-outline-info"
+                                            @click="resolveItem({{ item.pk }}, 'MANUAL', '')"
+                                            title="Manuell bearbeitet markieren">
+                                        <i class="fas fa-check"></i> Manuell
+                                    </button>
+                                    {% endif %}
+                                    <button class="btn btn-xs btn-outline-secondary"
+                                            @click="resolveItem({{ item.pk }}, 'IGNORED', '')"
+                                            title="Ignorieren">
+                                        <i class="fas fa-eye-slash"></i>
+                                    </button>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bulk-Aktionsleiste (nur sichtbar wenn Zeilen ausgewählt) -->
+    <div class="alert alert-danger d-flex align-items-center justify-content-between mt-3"
+         :class="{ 'd-none': selectedItems.length === 0 }">
+        <span>
+            <strong x-text="selectedItems.length"></strong> Sale(s) ausgewählt
+        </span>
+        <button class="btn btn-danger"
+                @click="confirmDeleteSale(selectedItems)">
+            <i class="fas fa-trash mr-1"></i> Ausgewählte stornieren
+        </button>
+    </div>
+
+    <!-- Aktionen -->
+    {% if payout.status != 'COMPLETED' %}
+    <div class="mt-3 d-flex justify-content-between">
+        <a href="{% url 'reconciliation:list' %}" class="btn btn-outline-secondary">
+            <i class="fas fa-arrow-left mr-1"></i> Zurück
+        </a>
+        <form method="POST" action="{% url 'reconciliation:complete' pk=payout.pk %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-success btn-lg"
+                    onclick="return confirm('Abgleich abschliessen und PDF generieren?')">
+                <i class="fas fa-check-double mr-2"></i> Abschliessen & PDF
+            </button>
+        </form>
+    </div>
+    {% else %}
+    <div class="mt-3 d-flex justify-content-between">
+        <a href="{% url 'reconciliation:list' %}" class="btn btn-outline-secondary">
+            <i class="fas fa-arrow-left mr-1"></i> Zurück
+        </a>
+        <a href="{% url 'reconciliation:pdf' pk=payout.pk %}" class="btn btn-info" target="_blank">
+            <i class="fas fa-file-pdf mr-2"></i> PDF herunterladen
+        </a>
+    </div>
+    {% endif %}
+
+    <!-- Delete Confirmation Modal (hidden via display:none, toggled by Alpine) -->
+    <div id="delete-modal" style="display:none; position:fixed;top:0;left:0;right:0;bottom:0;z-index:9999;align-items:center;justify-content:center;">
+        <div style="position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);"
+             @click="closeModal()"></div>
+        <div style="position:relative;background:#fff;border-radius:8px;padding:0;max-width:520px;width:90%;box-shadow:0 10px 40px rgba(0,0,0,0.3);">
+            <div style="background:#dc3545;color:#fff;padding:15px 20px;border-radius:8px 8px 0 0;">
+                <h5 style="margin:0;"><i class="fas fa-exclamation-triangle mr-2"></i> Sale(s) stornieren</h5>
+            </div>
+            <div style="padding:20px;">
+                <p>Folgende Sales werden <strong>unwiderruflich storniert</strong>:</p>
+                <ul id="delete-list" style="max-height:200px;overflow-y:auto;"></ul>
+                <p class="text-muted">Die Ware wird zurück ins Lager gebucht und der Verkauf als storniert markiert.</p>
+                <div class="form-group mt-3">
+                    <label><strong>Zur Bestätigung "STORNO" eingeben:</strong></label>
+                    <input type="text" id="delete-confirm-input" class="form-control"
+                           x-model="deleteConfirmText" placeholder="STORNO" autocomplete="off">
+                </div>
+            </div>
+            <div style="padding:10px 20px 20px;display:flex;justify-content:flex-end;gap:10px;">
+                <button class="btn btn-secondary" @click="closeModal()">Abbrechen</button>
+                <button class="btn btn-danger"
+                        :disabled="deleteConfirmText !== 'STORNO'"
+                        @click="executeDeleteSales()">
+                    <i class="fas fa-trash mr-1"></i> <span x-text="deleteQueue.length"></span> Sale(s) stornieren
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function reconciliationReview() {
+    return {
+        selectedItems: [],
+        deleteQueue: [],
+        deleteConfirmText: '',
+
+        toggleItem(itemPk, saleId, amount, checked) {
+            if (checked) {
+                this.selectedItems.push({ itemPk, saleId, amount });
+            } else {
+                this.selectedItems = this.selectedItems.filter(i => i.itemPk !== itemPk);
+            }
+        },
+
+        toggleAll(checked) {
+            this.selectedItems = [];
+            var self = this;
+            document.querySelectorAll('.sel-cb').forEach(function(cb) {
+                cb.checked = checked;
+                if (checked) {
+                    self.selectedItems.push({
+                        itemPk: parseInt(cb.dataset.item),
+                        saleId: parseInt(cb.dataset.sale),
+                        amount: cb.dataset.amount
+                    });
+                }
+            });
+        },
+
+        confirmDeleteSale(items) {
+            this.deleteQueue = JSON.parse(JSON.stringify(items));
+            this.deleteConfirmText = '';
+            var list = document.getElementById('delete-list');
+            list.innerHTML = this.deleteQueue.map(function(i) {
+                return '<li>Sale <strong>#' + i.saleId + '</strong> — CHF ' + i.amount + '</li>';
+            }).join('');
+            document.getElementById('delete-modal').style.display = 'flex';
+        },
+
+        closeModal() {
+            document.getElementById('delete-modal').style.display = 'none';
+            this.deleteQueue = [];
+            this.deleteConfirmText = '';
+        },
+
+        async executeDeleteSales() {
+            if (this.deleteConfirmText !== 'STORNO') return;
+            document.getElementById('delete-modal').style.display = 'none';
+            for (var idx = 0; idx < this.deleteQueue.length; idx++) {
+                await this.resolveItem(this.deleteQueue[idx].itemPk, 'SALE_DELETED', '');
+            }
+            this.deleteQueue = [];
+            this.deleteConfirmText = '';
+            this.selectedItems = [];
+        },
+
+        resolveItem(itemPk, resolution, newPaymentMethod) {
+            const formData = new FormData();
+            formData.append('resolution', resolution);
+            formData.append('resolution_note', '');
+            if (newPaymentMethod) {
+                formData.append('new_payment_method', newPaymentMethod);
+            }
+
+            return fetch(`{% url 'reconciliation:list' %}{{ payout.pk }}/item/${itemPk}/resolve/`, {
+                method: 'POST',
+                body: formData,
+                headers: {
+                    'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]')?.value
+                        || '{{ csrf_token }}'
+                }
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'ok') {
+                    const span = document.getElementById('resolution-' + itemPk);
+                    if (span) span.innerHTML = '<span class="text-info">' + data.resolution + '</span>';
+                    const row = document.getElementById('item-row-' + itemPk);
+                    if (row) {
+                        const td = row.querySelector('td:last-child');
+                        if (td) td.innerHTML = '<span class="text-info">' + data.resolution + '</span>';
+                        const cb = row.querySelector('.item-checkbox');
+                        if (cb) cb.closest('td').innerHTML = '';
+                    }
+                }
+            })
+            .catch(err => alert('Fehler: ' + err));
+        }
+    }
+}
+</script>
+{% endblock %}

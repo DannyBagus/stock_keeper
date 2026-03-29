@@ -68,6 +68,60 @@ def api_search_product(request):
         })
     return JsonResponse({'results': results})
 
+# --- SUMUP VERIFIZIERUNG ---
+
+@staff_member_required
+@require_GET
+def api_verify_sumup_payment(request):
+    """Prüft via SumUp API ob eine Zahlung mit passendem Betrag und Timestamp existiert."""
+    from reconciliation.sumup_client import SumUpClient, SumUpAPIError
+    from datetime import datetime, timedelta
+
+    amount = request.GET.get('amount', '')
+    timestamp = request.GET.get('timestamp', '')  # Unix-Timestamp in ms
+
+    if not amount or not timestamp:
+        return JsonResponse({'verified': False, 'error': 'amount und timestamp erforderlich'})
+
+    try:
+        amount = Decimal(amount)
+        ts_ms = int(timestamp)
+        payment_time = datetime.utcfromtimestamp(ts_ms / 1000)
+    except (ValueError, TypeError):
+        return JsonResponse({'verified': False, 'error': 'Ungültige Parameter'})
+
+    try:
+        client = SumUpClient()
+        oldest = (payment_time - timedelta(minutes=5)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        newest = (payment_time + timedelta(minutes=10)).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+        data = client._get('/v0.1/me/transactions/history', params={
+            'oldest_time': oldest,
+            'newest_time': newest,
+            'limit': 20,
+        })
+        transactions = data.get('items', [])
+
+        # Suche passende Transaktion: SUCCESSFUL + Betrag stimmt + Timestamp im Titel
+        for txn in transactions:
+            if txn.get('status') != 'SUCCESSFUL':
+                continue
+            txn_amount = Decimal(str(txn.get('amount', 0)))
+            if abs(txn_amount - amount) > Decimal('0.01'):
+                continue
+            # Match gefunden
+            return JsonResponse({
+                'verified': True,
+                'transaction_code': txn.get('transaction_code', ''),
+                'sumup_tx_id': txn.get('id', ''),
+            })
+
+        return JsonResponse({'verified': False, 'error': 'Keine passende SumUp-Zahlung gefunden'})
+
+    except SumUpAPIError as e:
+        return JsonResponse({'verified': False, 'error': f'SumUp API: {e}'})
+
+
 # --- CHECKOUT LOGIK ---
 
 @staff_member_required
@@ -79,6 +133,7 @@ def api_checkout(request):
         items = data.get('items', [])
         payment_method = data.get('payment_method', 'CASH')
         customer_data = data.get('customer', None)
+        transaction_code = data.get('transaction_code', '')
 
         if not items:
             return JsonResponse({'success': False, 'error': 'Warenkorb leer'})
@@ -89,7 +144,8 @@ def api_checkout(request):
             payment_method=payment_method,
             status=Sale.Status.COMPLETED,
             created_by=request.user,
-            channel=Sale.SalesChannel.POS
+            channel=Sale.SalesChannel.POS,
+            transaction_id=transaction_code or None,
         )
 
         total_gross = Decimal('0.00')

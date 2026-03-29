@@ -14,7 +14,7 @@
     function posApp() {
         return {
             searchQuery: '', searchResults: [], cart: [], noResults: false, isLoading: false,
-            showCheckoutModal: false, showSuccessModal: false, showDiversesModal: false, // NEU: Diverses Modal
+            showCheckoutModal: false, showSuccessModal: false, showDiversesModal: false, showSumupWarning: false, sumupWarningMsg: '',
             scanner: null, isCameraActive: false, showScannerControls: false, scanCooldown: false,
             createdSaleId: null, createdPdfUrl: '',
             toast: { show: false, message: '', type: 'success' },
@@ -30,7 +30,9 @@
 
             // --- KONFIGURATION SUMUP ---
             sumUpAffiliateKey: 'sup_afk_fhpRcEDdXRZouibkztggzW5qwt3DbL4a',
-            sumUpAppId: 'stock-keeper.raowy.ch', 
+            sumUpAppId: 'stock-keeper.raowy.ch',
+            sumupTimestamp: null,
+            sumupForceBook: false,
 
             init() {
                 this.restoreState();
@@ -205,10 +207,12 @@
             initiateCheckout() { if (this.cart.length === 0) return; this.paymentMethod = 'CASH'; this.showCheckoutModal = true; },
             
             startSumUpPayment() {
-                this.paymentMethod = 'SUMUP'; 
+                this.paymentMethod = 'SUMUP';
+                this.sumupTimestamp = Date.now();
                 this.saveState('SUMUP');
+                localStorage.setItem('pos_sumup_ts', this.sumupTimestamp);
                 const total = this.cartTotal.toFixed(2);
-                const title = encodeURIComponent('Kauf-' + new Date().getTime()); 
+                const title = encodeURIComponent('Kauf-' + this.sumupTimestamp);
                 const currency = 'CHF';
                 const callback = encodeURIComponent(window.location.href);
                 const url = `sumupmerchant://pay/1.0?affiliate-key=${this.sumUpAffiliateKey}&app-id=${this.sumUpAppId}&total=${total}&currency=${currency}&title=${title}&skip-screen-success=true&callback=${callback}`;
@@ -235,28 +239,55 @@
                         this.showNotification('Bitte alle Pflichtfelder ausfüllen!', 'warning');
                         return;
                     }
-                    // FIX: Leerzeichen entfernen (Trim), damit keine "User unknown" Fehler entstehen
                     if (this.customer.email) {
                         this.customer.email = this.customer.email.trim();
                     }
                 }
 
                 this.isLoading = true;
+                let transactionCode = '';
+
+                // SumUp: Zahlung verifizieren bevor Sale erstellt wird
+                if (this.paymentMethod === 'SUMUP' && !this.sumupForceBook) {
+                    try {
+                        const ts = this.sumupTimestamp || localStorage.getItem('pos_sumup_ts') || '';
+                        const verifyUrl = `/commerce/api/verify-sumup/?amount=${this.cartTotal.toFixed(2)}&timestamp=${ts}`;
+                        const vRes = await fetch(verifyUrl);
+                        const vData = await vRes.json();
+                        if (vData.verified) {
+                            transactionCode = vData.transaction_code || '';
+                        } else {
+                            this.isLoading = false;
+                            this.sumupWarningMsg = vData.error || 'Keine passende SumUp-Zahlung gefunden.';
+                            this.showSumupWarning = true;
+                            return;
+                        }
+                    } catch (err) {
+                        this.isLoading = false;
+                        this.sumupWarningMsg = 'SumUp-Verifizierung fehlgeschlagen (Netzwerkfehler).';
+                        this.showSumupWarning = true;
+                        return;
+                    }
+                }
+                this.sumupForceBook = false;
+
                 try {
                     const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
-                    const response = await fetch('/commerce/api/checkout/', { 
-                        method: 'POST', 
-                        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken }, 
-                        body: JSON.stringify({ 
-                            items: this.cart, 
+                    const response = await fetch('/commerce/api/checkout/', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+                        body: JSON.stringify({
+                            items: this.cart,
                             payment_method: this.paymentMethod,
-                            customer: this.customer 
-                        }) 
+                            customer: this.customer,
+                            transaction_code: transactionCode
+                        })
                     });
                     const result = await response.json();
                     if (result.success) {
                         this.clearState(); this.cart = []; this.createdSaleId = result.sale_id; this.createdPdfUrl = result.pdf_url;
                         this.customer = { first_name: '', last_name: '', address: '', zip_code: '', city: '', email: '' };
+                        localStorage.removeItem('pos_sumup_ts');
                         this.showCheckoutModal = false; this.showSuccessModal = true;
                     } else { this.showNotification('Fehler: ' + result.error, 'error'); this.showCheckoutModal = false; }
                 } catch (err) { this.showNotification('Netzwerkfehler', 'error'); } finally { this.isLoading = false; }
@@ -431,6 +462,31 @@
                 <div class="mt-4">
                     <button class="btn btn-warning btn-lg btn-block mb-2" @click="printReceipt()"><i class="fas fa-print"></i> Quittung / Rechnung (PDF)</button>
                     <button class="btn btn-outline-primary btn-lg btn-block" @click="closeSuccess()"><i class="fas fa-cart-plus"></i> Neuer Einkauf</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- SUMUP WARNING MODAL -->
+    <div class="modal-overlay" x-show="showSumupWarning" style="display: none;">
+        <div class="modal-box">
+            <div class="modal-header bg-warning text-dark">
+                <h5 class="modal-title"><i class="fas fa-exclamation-triangle"></i> SumUp-Zahlung nicht bestätigt</h5>
+                <button type="button" class="close" @click="showSumupWarning = false">&times;</button>
+            </div>
+            <div class="modal-body text-center p-4">
+                <div class="text-warning mb-3" style="font-size: 3rem;"><i class="fas fa-credit-card"></i></div>
+                <h4>Zahlung nicht gefunden</h4>
+                <p class="text-muted" x-text="sumupWarningMsg"></p>
+                <p>Bitte prüfe in der SumUp-App ob die Zahlung erfolgreich war.</p>
+                <hr>
+                <div class="mt-4">
+                    <button class="btn btn-outline-secondary btn-lg btn-block mb-2" @click="showSumupWarning = false">
+                        <i class="fas fa-arrow-left mr-2"></i> Zurück (nicht buchen)
+                    </button>
+                    <button class="btn btn-warning btn-lg btn-block" @click="showSumupWarning = false; sumupForceBook = true; confirmCheckout();">
+                        <i class="fas fa-exclamation-circle mr-2"></i> Trotzdem buchen
+                    </button>
                 </div>
             </div>
         </div>
