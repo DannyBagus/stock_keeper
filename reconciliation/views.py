@@ -211,8 +211,7 @@ def reconciliation_complete(request, pk):
     payout.completed_at = timezone.now()
     payout.save()
 
-    messages.success(request, "Abgleich abgeschlossen. PDF wird generiert.")
-    return redirect('reconciliation:pdf', pk=payout.pk)
+    return JsonResponse({'status': 'ok'})
 
 
 @staff_member_required
