@@ -1,11 +1,55 @@
+from collections import defaultdict
+from datetime import timedelta
+
 from django.contrib import admin
 from django.http import HttpResponse
 from django.shortcuts import redirect
 from django.contrib import messages
-from .models import PurchaseOrder, PurchaseOrderItem, Sale, SaleItem 
+from django.utils import timezone
+from .models import PurchaseOrder, PurchaseOrderItem, Sale, SaleItem
 from .utils import render_to_pdf
-from core.models import Product, Supplier 
+from core.models import Product, Supplier
 from .forms import SaleItemFormSet, PurchaseOrderForm
+
+
+class SuspectedDuplicateFilter(admin.SimpleListFilter):
+    """Zeigt Sales, die innert 10 min mit identischem Betrag/Methode/Operator
+    gebucht wurden — verdächtige Doppelbuchungen."""
+
+    title = 'Doppelbuchungs-Verdacht'
+    parameter_name = 'dupes'
+
+    def lookups(self, request, model_admin):
+        return (
+            ('10', 'Verdacht: ±10 min, gleicher Betrag/Methode/Operator'),
+            ('60', 'Verdacht: ±60 min'),
+        )
+
+    def queryset(self, request, queryset):
+        if self.value() not in ('10', '60'):
+            return queryset
+        window = timedelta(minutes=int(self.value()))
+        candidate_qs = (Sale.objects
+                        .filter(status=Sale.Status.COMPLETED)
+                        .exclude(channel=Sale.SalesChannel.WEB)
+                        .order_by('date'))
+        groups = defaultdict(list)
+        for s in candidate_qs.only(
+                'id', 'date', 'total_amount_gross',
+                'payment_method', 'created_by_id', 'channel'):
+            key = (s.total_amount_gross, s.payment_method,
+                   s.created_by_id, s.channel)
+            groups[key].append(s)
+        suspect_ids = set()
+        for sales in groups.values():
+            if len(sales) < 2:
+                continue
+            sales.sort(key=lambda x: x.date)
+            for prev, curr in zip(sales, sales[1:]):
+                if curr.date - prev.date <= window:
+                    suspect_ids.add(prev.id)
+                    suspect_ids.add(curr.id)
+        return queryset.filter(id__in=suspect_ids)
 
 # --- Inlines ---
 
@@ -89,10 +133,11 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
 class SaleAdmin(admin.ModelAdmin):
     actions = ['action_generate_receipt', 'action_refund_sale'] 
     
-    list_display = ('id', 'date', 'total_amount_gross', 'payment_method', 'channel', 'status', 'created_by')
-    list_filter = ('date', 'payment_method', 'channel', 'status', 'created_by')
-    inlines = [SaleItemInline] 
-    readonly_fields = ('total_amount_net', 'total_amount_gross', 'transaction_id', 'created_by', 'channel', 'status')
+    list_display = ('id', 'date', 'total_amount_gross', 'payment_method', 'channel', 'status', 'created_by', 'transaction_id')
+    list_filter = (SuspectedDuplicateFilter, 'date', 'payment_method', 'channel', 'status', 'created_by')
+    search_fields = ('transaction_id', 'idempotency_key', 'id')
+    inlines = [SaleItemInline]
+    readonly_fields = ('total_amount_net', 'total_amount_gross', 'transaction_id', 'idempotency_key', 'created_by', 'channel', 'status')
     
     def save_related(self, request, form, formsets, change):
         super().save_related(request, form, formsets, change)

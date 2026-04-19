@@ -12,7 +12,8 @@ from django.contrib.auth import get_user_model
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST, require_GET
 from django.contrib.admin.views.decorators import staff_member_required
-from django.db import transaction
+from datetime import timedelta
+from django.db import transaction, IntegrityError
 from django.db.models import Q
 from django.utils import timezone
 import barcode 
@@ -124,6 +125,15 @@ def api_verify_sumup_payment(request):
 
 # --- CHECKOUT LOGIK ---
 
+def _existing_sale_response(sale):
+    return JsonResponse({
+        'success': True,
+        'sale_id': sale.id,
+        'pdf_url': f"/commerce/sale/{sale.id}/pdf/",
+        'duplicate_prevented': True,
+    })
+
+
 @staff_member_required
 @require_POST
 @transaction.atomic
@@ -134,19 +144,74 @@ def api_checkout(request):
         payment_method = data.get('payment_method', 'CASH')
         customer_data = data.get('customer', None)
         transaction_code = data.get('transaction_code', '')
+        idempotency_key = (data.get('idempotency_key') or '').strip() or None
+        confirm_duplicate = bool(data.get('confirm_duplicate'))
 
         if not items:
             return JsonResponse({'success': False, 'error': 'Warenkorb leer'})
 
+        # --- Doppelter Boden, Schicht 1: exakter Idempotency-Key match ---
+        if idempotency_key:
+            existing = Sale.objects.filter(idempotency_key=idempotency_key).first()
+            if existing:
+                return _existing_sale_response(existing)
+
+        # --- Doppelter Boden, Schicht 2: gleicher SumUp transaction_code ---
+        # Gleiches Pattern wie Shopify-Webhook (views.py: shopify_webhook).
+        if transaction_code:
+            existing = Sale.objects.filter(transaction_id=transaction_code).first()
+            if existing:
+                return _existing_sale_response(existing)
+
+        # --- Doppelter Boden, Schicht 3: naher Duplikat-Verdacht ---
+        # Gleicher Operator + Betrag + Zahlungsmethode innert 60s → Rückfrage.
+        cart_total = Decimal('0.00')
+        for it in items:
+            try:
+                qty_i = int(it.get('qty', 0))
+                price_raw = it.get('custom_price') if it.get('custom_price') is not None else it.get('price', 0)
+                cart_total += Decimal(str(price_raw)) * qty_i
+            except (ValueError, TypeError, ArithmeticError):
+                continue
+
+        if not confirm_duplicate and cart_total > 0:
+            recent_cutoff = timezone.now() - timedelta(seconds=60)
+            near_dup = Sale.objects.filter(
+                created_by=request.user,
+                payment_method=payment_method,
+                total_amount_gross=cart_total,
+                status=Sale.Status.COMPLETED,
+                date__gte=recent_cutoff,
+            ).exists()
+            if near_dup:
+                return JsonResponse({
+                    'success': False,
+                    'needs_confirmation': True,
+                    'warning': 'Vor weniger als 60 Sekunden wurde bereits ein Verkauf mit identischem Betrag und Zahlungsmethode gebucht. Wirklich nochmal buchen?',
+                }, status=409)
+
         # 1. Sale erstellen
-        sale = Sale.objects.create(
-            date=timezone.now(),
-            payment_method=payment_method,
-            status=Sale.Status.COMPLETED,
-            created_by=request.user,
-            channel=Sale.SalesChannel.POS,
-            transaction_id=transaction_code or None,
-        )
+        try:
+            sale = Sale.objects.create(
+                date=timezone.now(),
+                payment_method=payment_method,
+                status=Sale.Status.COMPLETED,
+                created_by=request.user,
+                channel=Sale.SalesChannel.POS,
+                transaction_id=transaction_code or None,
+                idempotency_key=idempotency_key,
+            )
+        except IntegrityError:
+            # Letzter Schutzwall: Race zwischen zwei parallelen Requests.
+            # Der andere Request war schneller — existierenden Sale zurückgeben.
+            existing = None
+            if idempotency_key:
+                existing = Sale.objects.filter(idempotency_key=idempotency_key).first()
+            if not existing and transaction_code:
+                existing = Sale.objects.filter(transaction_id=transaction_code).first()
+            if existing:
+                return _existing_sale_response(existing)
+            raise
 
         total_gross = Decimal('0.00')
 

@@ -124,16 +124,34 @@ class Sale(models.Model):
     payment_method = models.CharField(max_length=20, choices=PaymentMethod.choices, default=PaymentMethod.CASH)
     transaction_id = models.CharField(max_length=100, blank=True, null=True, help_text="Transaktions-ID von SumUp/Twint")
     channel = models.CharField(
-        max_length=10, 
-        choices=SalesChannel.choices, 
+        max_length=10,
+        choices=SalesChannel.choices,
         default=SalesChannel.POS,
         help_text="Über welchen Kanal wurde dieser Verkauf getätigt?"
     )
-    
+
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.COMPLETED)
-    
+
     # Optional: User für Audit Log
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+
+    idempotency_key = models.CharField(
+        max_length=64, blank=True, null=True, unique=True, db_index=True,
+        help_text="Client-generierter Key, verhindert Doppelbuchungen durch Retries/Doppelklicks"
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['transaction_id'],
+                condition=(
+                    models.Q(transaction_id__isnull=False)
+                    & ~models.Q(transaction_id='')
+                    & models.Q(status='COMPLETED')
+                ),
+                name='unique_tx_id_when_completed',
+            ),
+        ]
 
     def __str__(self):
         return f"Sale-{self.id} | {self.date.date()}"
