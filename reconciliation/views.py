@@ -7,10 +7,12 @@ from django.contrib.admin.views.decorators import staff_member_required
 from django.db import transaction
 from django.utils import timezone
 
+from commerce.models import Sale, SaleItem
+from core.models import Product
 from .models import SumUpPayout, ReconciliationItem
 from .forms import PayoutStartForm
 from .sumup_client import SumUpClient, SumUpAPIError
-from .matching import run_matching
+from .matching import run_matching, detect_channel
 from .pdf import generate_voucher_pdf
 
 logger = logging.getLogger(__name__)
@@ -189,6 +191,98 @@ def resolve_item(request, pk, item_pk):
 
     item.save()
     return JsonResponse({'status': 'ok', 'resolution': item.get_resolution_display()})
+
+
+@staff_member_required
+@transaction.atomic
+def create_sale_for_item(request, pk, item_pk):
+    """
+    Erstellt einen nachträglichen SumUp-Sale für einen ONLY_SUMUP ReconciliationItem.
+    Default-Produkt: SKU 'DIVERSES'. Mit optionalem product_id kann ein
+    konkretes Produkt gewählt werden.
+    """
+    if request.method != 'POST':
+        return JsonResponse({'error': 'POST required'}, status=405)
+
+    payout = get_object_or_404(SumUpPayout, pk=pk)
+    item = get_object_or_404(ReconciliationItem, pk=item_pk, payout=payout)
+
+    if item.match_status != ReconciliationItem.MatchStatus.ONLY_SUMUP:
+        return JsonResponse({'error': 'Sale-Nachbuchung nur für "Nur SumUp"-Zeilen möglich.'}, status=400)
+    if item.sale_id:
+        return JsonResponse({'error': 'Für diese Zeile existiert bereits ein Sale.'}, status=400)
+    if not item.sumup_amount:
+        return JsonResponse({'error': 'SumUp-Betrag fehlt auf der Zeile.'}, status=400)
+
+    product_id = request.POST.get('product_id', '').strip()
+    if product_id:
+        try:
+            product = Product.objects.get(pk=int(product_id))
+        except (Product.DoesNotExist, ValueError):
+            return JsonResponse({'error': 'Produkt nicht gefunden.'}, status=404)
+    else:
+        product = Product.objects.filter(sku='DIVERSES').first()
+        if not product:
+            return JsonResponse(
+                {'error': 'Produkt mit SKU "DIVERSES" fehlt. Bitte im Admin anlegen.'},
+                status=400,
+            )
+
+    sumup_amount = Decimal(str(item.sumup_amount))
+    sale_date = item.sumup_timestamp or timezone.now()
+    tx_code = item.sumup_tx_code or item.sumup_tx_id or None
+    idem_key = f'recon-item-{item.pk}'
+
+    existing = Sale.objects.filter(idempotency_key=idem_key).first()
+    if existing:
+        sale = existing
+    else:
+        sale = Sale.objects.create(
+            date=sale_date,
+            payment_method=Sale.PaymentMethod.SUMUP,
+            channel=Sale.SalesChannel.POS,
+            status=Sale.Status.COMPLETED,
+            created_by=request.user,
+            transaction_id=tx_code,
+            idempotency_key=idem_key,
+        )
+        vat_rate = product.vat.rate if product.vat else Decimal('0.00')
+        SaleItem.objects.create(
+            sale=sale,
+            product=product,
+            quantity=1,
+            unit_price_gross=sumup_amount,
+            vat_rate=vat_rate,
+        )
+        sale.total_amount_gross = sumup_amount
+        if vat_rate and vat_rate > 0:
+            sale.total_amount_net = (
+                sumup_amount / (Decimal('1.00') + (vat_rate / Decimal('100.00')))
+            ).quantize(Decimal('0.01'))
+        else:
+            sale.total_amount_net = sumup_amount
+        sale.save()
+
+    item.sale = sale
+    item.sk_amount = sumup_amount
+    item.sk_timestamp = sale.date
+    item.match_status = ReconciliationItem.MatchStatus.MATCHED
+    item.match_tier = ReconciliationItem.MatchTier.EXACT
+    item.gap_amount = Decimal('0')
+    item.gap_pct = Decimal('0')
+    item.channel = detect_channel(sale)
+    item.resolution = ReconciliationItem.Resolution.SALE_ADDED
+    item.resolution_note = f"Sale #{sale.id} nacherfasst ({product.sku})"
+    item.resolved_at = timezone.now()
+    item.save()
+
+    return JsonResponse({
+        'status': 'ok',
+        'sale_id': sale.id,
+        'product_sku': product.sku,
+        'product_name': str(product),
+        'resolution': item.get_resolution_display(),
+    })
 
 
 @staff_member_required

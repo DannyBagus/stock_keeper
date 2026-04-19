@@ -3,6 +3,7 @@
 
 {% block extrahead %}
 <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.3/dist/cdn.min.js"></script>
+<style>[x-cloak]{display:none!important}</style>
 {% endblock %}
 
 {% block content %}
@@ -229,6 +230,18 @@
                                     </button>
                                     {% endif %}
                                     {% elif item.match_status == 'ONLY_SUMUP' %}
+                                    <button class="btn btn-xs btn-success"
+                                            @click="createDiversesSale({{ item.pk }}, '{{ item.sumup_amount }}')"
+                                            title="Sale mit Produkt 'Diverses' anlegen">
+                                        <i class="fas fa-plus"></i> Diverses
+                                    </button>
+                                    {% if item.sumup_amount and item.sumup_amount > 30 %}
+                                    <button class="btn btn-xs btn-primary"
+                                            @click="openProductPicker({{ item.pk }}, '{{ item.sumup_amount }}')"
+                                            title="Sale mit konkretem Produkt anlegen (empfohlen bei > CHF 30)">
+                                        <i class="fas fa-search"></i> Produkt wählen
+                                    </button>
+                                    {% endif %}
                                     <button class="btn btn-xs btn-outline-info"
                                             @click="resolveItem({{ item.pk }}, 'MANUAL', '')"
                                             title="Manuell bearbeitet markieren">
@@ -282,6 +295,72 @@
         </a>
     </div>
     {% endif %}
+
+    <!-- Product Picker Modal (für ONLY_SUMUP Nachbuchung) -->
+    <div id="picker-modal" x-show="pickerOpen" x-cloak
+         style="position:fixed;top:0;left:0;right:0;bottom:0;z-index:9999;align-items:center;justify-content:center;"
+         :style="pickerOpen ? 'display:flex' : 'display:none'">
+        <div style="position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);"
+             @click="closePicker()"></div>
+        <div style="position:relative;background:#fff;border-radius:8px;padding:0;max-width:640px;width:90%;box-shadow:0 10px 40px rgba(0,0,0,0.3);">
+            <div style="background:#007bff;color:#fff;padding:15px 20px;border-radius:8px 8px 0 0;">
+                <h5 style="margin:0;">
+                    <i class="fas fa-search mr-2"></i>
+                    Produkt wählen — Sale über CHF <span x-text="pickerAmount"></span> nachbuchen
+                </h5>
+            </div>
+            <div style="padding:20px;">
+                <p class="text-muted">
+                    Suche nach Name, SKU oder EAN. Das gewählte Produkt wird mit Menge 1 und
+                    dem SumUp-Betrag als Brutto-Preis erfasst. Wenn das Produkt unbekannt ist,
+                    verwende stattdessen <strong>Diverses</strong>.
+                </p>
+                <input type="text"
+                       class="form-control"
+                       x-model="pickerQuery"
+                       @input.debounce.300ms="searchProducts()"
+                       placeholder="Name, SKU oder EAN eingeben…"
+                       autocomplete="off">
+
+                <div class="mt-3" style="max-height:300px;overflow-y:auto;">
+                    <template x-if="pickerResults.length === 0 && pickerQuery.length > 0">
+                        <p class="text-muted text-center my-3">Keine Treffer.</p>
+                    </template>
+                    <table class="table table-sm table-hover" x-show="pickerResults.length > 0">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>SKU</th>
+                                <th class="text-right">Preis</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <template x-for="p in pickerResults" :key="p.id">
+                                <tr>
+                                    <td x-text="p.name"></td>
+                                    <td><code x-text="p.sku"></code></td>
+                                    <td class="text-right" x-text="'CHF ' + p.price.toFixed(2)"></td>
+                                    <td class="text-right">
+                                        <button class="btn btn-xs btn-primary"
+                                                :disabled="pickerBusy"
+                                                @click="selectProduct(p.id, p.name)">
+                                            <i class="fas fa-check"></i> Wählen
+                                        </button>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div style="padding:10px 20px 20px;display:flex;justify-content:flex-end;gap:10px;">
+                <button class="btn btn-secondary" @click="closePicker()" :disabled="pickerBusy">
+                    Abbrechen
+                </button>
+            </div>
+        </div>
+    </div>
 
     <!-- Complete Confirmation Modal -->
     <div id="complete-modal" style="display:none; position:fixed;top:0;left:0;right:0;bottom:0;z-index:9999;align-items:center;justify-content:center;">
@@ -350,6 +429,68 @@ function reconciliationReview() {
         selectedItems: [],
         deleteQueue: [],
         deleteConfirmText: '',
+        pickerOpen: false,
+        pickerItemPk: null,
+        pickerAmount: '',
+        pickerQuery: '',
+        pickerResults: [],
+        pickerBusy: false,
+
+        createDiversesSale(itemPk, amount) {
+            if (!confirm('Sale "Diverses" über CHF ' + amount + ' nachbuchen?')) return;
+            this.postCreateSale(itemPk, null);
+        },
+
+        openProductPicker(itemPk, amount) {
+            this.pickerItemPk = itemPk;
+            this.pickerAmount = amount;
+            this.pickerQuery = '';
+            this.pickerResults = [];
+            this.pickerBusy = false;
+            this.pickerOpen = true;
+        },
+
+        closePicker() {
+            this.pickerOpen = false;
+            this.pickerItemPk = null;
+            this.pickerQuery = '';
+            this.pickerResults = [];
+        },
+
+        searchProducts() {
+            const q = this.pickerQuery.trim();
+            if (q.length < 2) { this.pickerResults = []; return; }
+            fetch('/commerce/api/search/?q=' + encodeURIComponent(q))
+                .then(r => r.json())
+                .then(data => { this.pickerResults = data.results || []; })
+                .catch(() => { this.pickerResults = []; });
+        },
+
+        selectProduct(productId, productName) {
+            if (!confirm('Sale "' + productName + '" über CHF ' + this.pickerAmount + ' nachbuchen?')) return;
+            this.postCreateSale(this.pickerItemPk, productId);
+        },
+
+        postCreateSale(itemPk, productId) {
+            this.pickerBusy = true;
+            const formData = new FormData();
+            if (productId) formData.append('product_id', productId);
+            const csrf = document.querySelector('[name=csrfmiddlewaretoken]')?.value
+                || '{{ csrf_token }}';
+            return fetch(`{% url 'reconciliation:list' %}{{ payout.pk }}/item/${itemPk}/create-sale/`, {
+                method: 'POST',
+                body: formData,
+                headers: { 'X-CSRFToken': csrf }
+            })
+            .then(r => r.json().then(d => ({ ok: r.ok, data: d })))
+            .then(({ ok, data }) => {
+                this.pickerBusy = false;
+                if (!ok) { alert('Fehler: ' + (data.error || 'unbekannt')); return; }
+                // Neu laden — einfachster Weg, die Zeile konsistent umzufärben (MATCHED)
+                window.location.reload();
+            })
+            .catch(err => { this.pickerBusy = false; alert('Fehler: ' + err); });
+        },
 
         toggleItem(itemPk, saleId, amount, checked) {
             if (checked) {
