@@ -2,9 +2,12 @@ import hmac
 import hashlib
 import base64
 import json
+import logging
 from io import BytesIO
 from decimal import Decimal
 from django.conf import settings
+
+logger = logging.getLogger(__name__)
 from django.shortcuts import render, get_object_or_404, redirect
 from django.http import JsonResponse, HttpResponse, HttpResponseForbidden
 from django.contrib import admin
@@ -111,15 +114,21 @@ def api_verify_sumup_payment(request):
             if abs(txn_amount - amount) > Decimal('0.01'):
                 continue
             # Match gefunden
+            tx_code = txn.get('transaction_code', '')
+            logger.info("verify_sumup.hit amount=%s tx=%s ts=%s",
+                        amount, tx_code, txn.get('timestamp'))
             return JsonResponse({
                 'verified': True,
-                'transaction_code': txn.get('transaction_code', ''),
+                'transaction_code': tx_code,
                 'sumup_tx_id': txn.get('id', ''),
             })
 
+        logger.info("verify_sumup.miss amount=%s window=%s..%s candidates=%d",
+                    amount, oldest, newest, len(transactions))
         return JsonResponse({'verified': False, 'error': 'Keine passende SumUp-Zahlung gefunden'})
 
     except SumUpAPIError as e:
+        logger.warning("verify_sumup.api_error %s", e)
         return JsonResponse({'verified': False, 'error': f'SumUp API: {e}'})
 
 
@@ -150,10 +159,17 @@ def api_checkout(request):
         if not items:
             return JsonResponse({'success': False, 'error': 'Warenkorb leer'})
 
+        logger.info(
+            "checkout.request user=%s method=%s items=%d tx_code=%s idem=%s confirm_dup=%s",
+            request.user.id, payment_method, len(items),
+            transaction_code or '-', idempotency_key or '-', confirm_duplicate,
+        )
+
         # --- Doppelter Boden, Schicht 1: exakter Idempotency-Key match ---
         if idempotency_key:
             existing = Sale.objects.filter(idempotency_key=idempotency_key).first()
             if existing:
+                logger.info("checkout.duplicate_prevented layer=idempotency sale=%s", existing.id)
                 return _existing_sale_response(existing)
 
         # --- Doppelter Boden, Schicht 2: gleicher SumUp transaction_code ---
@@ -161,10 +177,17 @@ def api_checkout(request):
         if transaction_code:
             existing = Sale.objects.filter(transaction_id=transaction_code).first()
             if existing:
+                logger.info("checkout.duplicate_prevented layer=tx_code sale=%s tx=%s",
+                            existing.id, transaction_code)
                 return _existing_sale_response(existing)
 
         # --- Doppelter Boden, Schicht 3: naher Duplikat-Verdacht ---
         # Gleicher Operator + Betrag + Zahlungsmethode innert 60s → Rückfrage.
+        # NUR für Zahlungen ohne externe Transaktion-ID. Bei SumUp haben zwei
+        # legitime Zahlungen unterschiedliche transaction_codes — Schicht 2
+        # blockiert echte Doppelbuchungen bereits sauber. Ein 409 hier wäre
+        # brandgefährlich: die Karte wurde bereits belastet, "Abbrechen" würde
+        # zu "Geld kassiert, kein Sale gebucht" führen.
         cart_total = Decimal('0.00')
         for it in items:
             try:
@@ -174,7 +197,7 @@ def api_checkout(request):
             except (ValueError, TypeError, ArithmeticError):
                 continue
 
-        if not confirm_duplicate and cart_total > 0:
+        if not confirm_duplicate and cart_total > 0 and not transaction_code:
             recent_cutoff = timezone.now() - timedelta(seconds=60)
             near_dup = Sale.objects.filter(
                 created_by=request.user,
@@ -184,6 +207,8 @@ def api_checkout(request):
                 date__gte=recent_cutoff,
             ).exists()
             if near_dup:
+                logger.warning("checkout.near_duplicate user=%s amount=%s method=%s",
+                               request.user.id, cart_total, payment_method)
                 return JsonResponse({
                     'success': False,
                     'needs_confirmation': True,
@@ -281,15 +306,18 @@ def api_checkout(request):
             # Optional: Falls man direkt das A4 PDF zurückgeben will
             # pdf_url = f"/commerce/sale/{sale.id}/invoice-pdf/"
 
+        logger.info("checkout.success sale=%s user=%s method=%s tx=%s gross=%s",
+                    sale.id, request.user.id, payment_method, transaction_code or '-', total_gross)
+
         return JsonResponse({
-            'success': True, 
+            'success': True,
             'sale_id': sale.id,
             'pdf_url': pdf_url
         })
 
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        logger.exception("checkout.error user=%s method=%s tx=%s",
+                         getattr(request.user, 'id', None), payment_method, transaction_code or '-')
         return JsonResponse({'success': False, 'error': str(e)})
 
 # --- PDF VIEWS ---
