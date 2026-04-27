@@ -106,25 +106,59 @@ def api_verify_sumup_payment(request):
         })
         transactions = data.get('items', [])
 
-        # Suche passende Transaktion: SUCCESSFUL + Betrag stimmt + Timestamp im Titel
+        # Kandidaten sammeln: SUCCESSFUL + Betrag passt + tx_code vorhanden
+        # + noch keiner Sale zugeordnet. Bevorzugt: Title-Match auf "Kauf-{ts_ms}"
+        # (haben wir beim SumUp-Initial-Call mitgegeben). So unterscheiden wir
+        # zwei legitime Zahlungen mit gleichem Betrag im selben Zeitfenster.
+        expected_title = f"Kauf-{ts_ms}"
+        title_match = None
+        amount_match = None
+        skipped_already_booked = 0
+
         for txn in transactions:
             if txn.get('status') != 'SUCCESSFUL':
                 continue
             txn_amount = Decimal(str(txn.get('amount', 0)))
             if abs(txn_amount - amount) > Decimal('0.01'):
                 continue
-            # Match gefunden
-            tx_code = txn.get('transaction_code', '')
-            logger.info("verify_sumup.hit amount=%s tx=%s ts=%s",
-                        amount, tx_code, txn.get('timestamp'))
+            tx_code = txn.get('transaction_code') or ''
+            if not tx_code:
+                continue
+            if Sale.objects.filter(transaction_id=tx_code).exists():
+                skipped_already_booked += 1
+                logger.info("verify_sumup.skip_already_booked tx=%s", tx_code)
+                continue
+            description = (txn.get('description') or '')
+            if expected_title and expected_title in description:
+                title_match = txn
+                break  # Title-Hit ist eindeutig, abbrechen
+            if amount_match is None:
+                amount_match = txn
+
+        chosen = title_match or amount_match
+        if chosen:
+            tx_code = chosen.get('transaction_code', '')
+            logger.info(
+                "verify_sumup.hit amount=%s tx=%s ts=%s match_kind=%s",
+                amount, tx_code, chosen.get('timestamp'),
+                'title' if title_match else 'amount',
+            )
             return JsonResponse({
                 'verified': True,
                 'transaction_code': tx_code,
-                'sumup_tx_id': txn.get('id', ''),
+                'sumup_tx_id': chosen.get('id', ''),
+                'match_kind': 'title' if title_match else 'amount',
             })
 
-        logger.info("verify_sumup.miss amount=%s window=%s..%s candidates=%d",
-                    amount, oldest, newest, len(transactions))
+        logger.info(
+            "verify_sumup.miss amount=%s window=%s..%s candidates=%d skipped_booked=%d",
+            amount, oldest, newest, len(transactions), skipped_already_booked,
+        )
+        if skipped_already_booked:
+            return JsonResponse({
+                'verified': False,
+                'error': 'Alle passenden SumUp-Zahlungen sind bereits einem Verkauf zugeordnet. Falls dies eine neue Zahlung ist, in der SumUp-App die Transaktion prüfen.',
+            })
         return JsonResponse({'verified': False, 'error': 'Keine passende SumUp-Zahlung gefunden'})
 
     except SumUpAPIError as e:
