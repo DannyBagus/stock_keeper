@@ -27,9 +27,13 @@ SECRET_KEY = 'django-insecure-dsq#u+gn6v-24bcgf-0$0ddi(+$g^p7hz33qzzjz22s*_@k*1w
 # Application definition
 
 INSTALLED_APPS = [
+    # core zuerst, damit Template-Overrides (z. B. admin/login.html mit SSO-Button)
+    # Vorrang vor jazzmin haben.
+    'core',
+
     # custom admin ui
     'jazzmin',
-    
+
     #django default apps
     'django.contrib.admin',
     'django.contrib.auth',
@@ -37,12 +41,31 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    
+
     # Eigene Apps
-    'core',
     'commerce',
     'reconciliation',
+
+    # OIDC (Authentik SSO)
+    'mozilla_django_oidc',
 ]
+
+AUTHENTICATION_BACKENDS = [
+    'core.oidc_backend.StockKeeperOIDCBackend',
+    'django.contrib.auth.backends.ModelBackend',
+]
+
+# OIDC (Authentik)
+OIDC_RP_CLIENT_ID = os.environ.get('OIDC_CLIENT_ID', 'stockkeeper')
+OIDC_RP_CLIENT_SECRET = os.environ.get('OIDC_CLIENT_SECRET', '')
+OIDC_OP_BASE_URL = os.environ.get('OIDC_OP_BASE_URL', 'https://auth.sanatify.ch')
+OIDC_OP_AUTHORIZATION_ENDPOINT = OIDC_OP_BASE_URL + '/application/o/authorize/'
+OIDC_OP_TOKEN_ENDPOINT = OIDC_OP_BASE_URL + '/application/o/token/'
+OIDC_OP_USER_ENDPOINT = OIDC_OP_BASE_URL + '/application/o/userinfo/'
+OIDC_OP_JWKS_ENDPOINT = OIDC_OP_BASE_URL + '/application/o/stockkeeper/jwks/'
+OIDC_OP_LOGOUT_ENDPOINT = OIDC_OP_BASE_URL + '/application/o/stockkeeper/end-session/'
+OIDC_RP_SIGN_ALGO = 'RS256'
+OIDC_RP_SCOPES = 'openid profile email groups'
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -119,8 +142,9 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 
 # LOGIN REDIRECT (Wichtig!)
-LOGIN_REDIRECT_URL = '/'          # Nach Login zum Custom Dashboard
-LOGOUT_REDIRECT_URL = '/admin/login/' # Nach Logout zum Login
+LOGIN_URL = 'oidc_authentication_init'  # Default-Ziel für @login_required
+LOGIN_REDIRECT_URL = '/'                # Nach Login zum Custom Dashboard
+LOGOUT_REDIRECT_URL = '/admin/login/'   # Nach Logout zum Login
 
 
 # --- JAZZMIN KONFIGURATION ---

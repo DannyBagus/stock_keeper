@@ -224,8 +224,8 @@ class Command(BaseCommand):
             "  B) Sale öffnen, Zahlart prüfen/korrigieren (Bar? Twint?) oder",
             "     stornieren, falls nie bezahlt wurde.",
             "",
-            "Sales-Admin: https://stock-keeper.raowy.ch/admin/commerce/sale/",
-            "Reconciliation: https://stock-keeper.raowy.ch/reconciliation/",
+            "Sales-Admin: https://stock-keeper.mileja.ch/admin/commerce/sale/",
+            "Reconciliation: https://stock-keeper.mileja.ch/reconciliation/",
             "",
             "(automatisch generiert, check_unmatched_sumup)",
         ]

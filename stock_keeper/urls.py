@@ -8,7 +8,8 @@ from core import views as core_views
 urlpatterns = [
     path('', core_views.dashboard_view, name='home'),
     path('admin/', admin.site.urls),
-    
+    path('oidc/', include('mozilla_django_oidc.urls')),
+
     # Apps einbinden
     path('core/', include('core.urls')),
     path('commerce/', include('commerce.urls')), # NEU: Commerce URLs

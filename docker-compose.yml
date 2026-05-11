@@ -47,19 +47,25 @@ services:
     labels:
       traefik.enable: "true"
 
-      # Router Konfiguration
+      # Alte Domain (raowy.ch) – 308 Permanent Redirect auf neue Domain (Pfad bleibt erhalten)
+      traefik.http.middlewares.sk-old-to-new.redirectregex.regex: "^https?://stock-keeper\\.raowy\\.ch/(.*)"
+      traefik.http.middlewares.sk-old-to-new.redirectregex.replacement: "https://stock-keeper.mileja.ch/$${1}"
+      traefik.http.middlewares.sk-old-to-new.redirectregex.permanent: "true"
       traefik.http.routers.stock-keeper.entrypoints: "websecure"
-      #traefik.http.routers.stock-keeper.middlewares: "authelia@docker"
+      traefik.http.routers.stock-keeper.middlewares: "sk-old-to-new@docker"
       traefik.http.routers.stock-keeper.rule: "Host(`stock-keeper.raowy.ch`)"
-
-      # TLS / SSL (Wildcard Strategie - nur für diesen Container aktiviert)
       traefik.http.routers.stock-keeper.tls: "true"
       traefik.http.routers.stock-keeper.tls.certresolver: "cfresolver"
-
-      # Wir beantragen ein Zertifikat für *.mileja... und mileja...
       traefik.http.routers.stock-keeper.tls.domains[0].main: "raowy.ch"
       traefik.http.routers.stock-keeper.tls.domains[0].sans: "*.raowy.ch"
-      
+
+      # Neue Domain (mileja.ch) – per-host cfresolver (Authentik folgt in Schritt 3)
+      traefik.http.routers.stock-keeper-new.entrypoints: "websecure"
+      traefik.http.routers.stock-keeper-new.rule: "Host(`stock-keeper.mileja.ch`)"
+      traefik.http.routers.stock-keeper-new.tls: "true"
+      traefik.http.routers.stock-keeper-new.tls.certresolver: "cfresolver"
+      traefik.http.routers.stock-keeper-new.service: "stock-keeper"
+
       traefik.http.services.stock-keeper.loadbalancer.server.port: "8000"
       traefik.http.services.stock-keeper.loadbalancer.server.scheme: "http"
     depends_on:

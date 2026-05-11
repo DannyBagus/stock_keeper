@@ -1,17 +1,20 @@
 from django.urls import path
-from . import views
+from . import views, views_auth
 
 urlpatterns = [
     # Tools
     path('scanner/', views.scanner_view, name='scanner'),
     path('inventory/', views.inventory_view, name='inventory'),
-    
+
     # Reports
-    path('inventory-report/', views.inventory_report_view, name='inventory_report'), 
+    path('inventory-report/', views.inventory_report_view, name='inventory_report'),
 
     # Export
     path('export/shopify/', views.shopify_export, name='shopify_export'),
 
     # API
     path('api/inventory-correct/', views.api_inventory_correct, name='api_inventory_correct'),
+
+    # Auth
+    path('sso-logout/', views_auth.sso_logout, name='sso_logout'),
 ]
