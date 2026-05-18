@@ -44,9 +44,13 @@ LATE_BOUNCE_TOLERANCE = timedelta(seconds=60)
 MAX_BOUNCE_AGE_DAYS = 7
 
 SALE_ID_SUBJECT_RE = re.compile(r'Rechnung\s+#(\d+)', re.IGNORECASE)
+SALE_ID_HEADER_RE = re.compile(rf'^{SALE_ID_HEADER}:\s*(\d+)', re.IGNORECASE | re.MULTILINE)
 FINAL_RECIPIENT_RE = re.compile(r'Final-Recipient:\s*rfc822;\s*<?([^>\s]+)', re.IGNORECASE)
+# Postfix-Style: "<test@testi.ch>: host testi.ch[...] said: 550 ..."
+POSTFIX_RECIPIENT_RE = re.compile(r'<([^>@]+@[^>]+)>:\s*host\b', re.IGNORECASE)
 DIAGNOSTIC_CODE_RE = re.compile(r'Diagnostic-Code:\s*(.+)', re.IGNORECASE)
 SMTP_STATUS_RE = re.compile(r'(5\d{2}[ -]\d\.\d\.\d.+?)$', re.MULTILINE)
+SAID_RE = re.compile(r'said:\s*(\d{3}[^\n\r]+)', re.IGNORECASE)
 
 
 def _is_bounce(mail) -> bool:
@@ -60,46 +64,55 @@ def _is_bounce(mail) -> bool:
     return False
 
 
-def _extract_sale_id(mail):
-    """Versucht primär den X-Stock-Keeper-Sale-Id Header aus der angehängten
-    Original-Mail zu lesen, fällt sonst auf Subject-/Body-Regex zurück."""
-    # imap-tools liefert .headers als Dict mit lowercase keys. Bei Bounces
-    # ist die Original-Mail meist als rfc822-Attachment dabei — deren
-    # Header tauchen NICHT direkt in mail.headers auf. Wir suchen den
-    # Header daher pragmatisch im Body-Text.
-    body = f"{mail.text or ''}\n{mail.html or ''}"
-    header_match = re.search(
-        rf'^{SALE_ID_HEADER}:\s*(\d+)',
-        body,
-        re.IGNORECASE | re.MULTILINE,
-    )
-    if header_match:
-        return int(header_match.group(1))
+def _collect_search_text(mail) -> str:
+    """Sammelt sichtbaren Body + alle rfc822/delivery-status Attachments
+    in einen durchsuchbaren Text. Bei Bounces liegt die Original-Mail
+    (mit Headers und Subject) als message/rfc822 Attachment vor."""
+    parts = [mail.text or '', mail.html or '']
+    for att in (mail.attachments or []):
+        ct = (att.content_type or '').lower()
+        if ct in ('message/rfc822', 'message/delivery-status', 'text/rfc822-headers'):
+            try:
+                parts.append(att.payload.decode('utf-8', errors='replace'))
+            except Exception:
+                pass
+    return '\n'.join(parts)
 
-    # Fallback 1: aus dem Subject ("Re: Rechnung #442 - Mileja GmbH")
-    if mail.subject:
-        m = SALE_ID_SUBJECT_RE.search(mail.subject)
-        if m:
-            return int(m.group(1))
 
-    # Fallback 2: aus dem Body (z.B. zitierter Original-Subject)
-    m = SALE_ID_SUBJECT_RE.search(body)
+def _extract_sale_id(search_text: str, subject: str):
+    """Primär X-Stock-Keeper-Sale-Id, dann Subject-Regex auf Bounce-Subject
+    + Original-Subject im rfc822-Attachment."""
+    m = SALE_ID_HEADER_RE.search(search_text)
     if m:
         return int(m.group(1))
-
+    if subject:
+        m = SALE_ID_SUBJECT_RE.search(subject)
+        if m:
+            return int(m.group(1))
+    m = SALE_ID_SUBJECT_RE.search(search_text)
+    if m:
+        return int(m.group(1))
     return None
 
 
-def _extract_failed_recipient(body: str):
-    m = FINAL_RECIPIENT_RE.search(body)
-    return m.group(1).strip() if m else None
+def _extract_failed_recipient(search_text: str):
+    m = FINAL_RECIPIENT_RE.search(search_text)
+    if m:
+        return m.group(1).strip()
+    m = POSTFIX_RECIPIENT_RE.search(search_text)
+    if m:
+        return m.group(1).strip()
+    return None
 
 
-def _extract_failure_reason(body: str):
-    m = DIAGNOSTIC_CODE_RE.search(body)
+def _extract_failure_reason(search_text: str):
+    m = DIAGNOSTIC_CODE_RE.search(search_text)
     if m:
         return m.group(1).strip()[:300]
-    m = SMTP_STATUS_RE.search(body)
+    m = SAID_RE.search(search_text)
+    if m:
+        return m.group(1).strip()[:300]
+    m = SMTP_STATUS_RE.search(search_text)
     if m:
         return m.group(1).strip()[:300]
     return None
@@ -173,10 +186,10 @@ class Command(BaseCommand):
                     if not _is_bounce(mail):
                         continue
                     processed += 1
-                    sale_id = _extract_sale_id(mail)
-                    body = f"{mail.text or ''}\n{mail.html or ''}"
-                    recipient = _extract_failed_recipient(body) or '(unbekannt)'
-                    reason = _extract_failure_reason(body) or '(kein Diagnostic-Code im Bounce)'
+                    search_text = _collect_search_text(mail)
+                    sale_id = _extract_sale_id(search_text, mail.subject or '')
+                    recipient = _extract_failed_recipient(search_text) or '(unbekannt)'
+                    reason = _extract_failure_reason(search_text) or '(kein Diagnostic-Code im Bounce)'
                     bounce_date = mail.date or timezone.now()
 
                     if sale_id is None:
