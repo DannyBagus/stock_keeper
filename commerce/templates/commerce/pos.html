@@ -17,6 +17,7 @@
             showCheckoutModal: false, showSuccessModal: false, showDiversesModal: false, showSumupWarning: false, sumupWarningMsg: '',
             scanner: null, isCameraActive: false, showScannerControls: false, scanCooldown: false,
             createdSaleId: null, createdPdfUrl: '',
+            invoiceEmailError: '', resendInvoiceUrl: '',
             toast: { show: false, message: '', type: 'success' },
             paymentMethod: 'CASH', 
             
@@ -402,6 +403,10 @@
                         this.stopSumupVerifyPolling();
                         this.sumupAutoVerified = false; this.sumupAutoVerifiedCode = '';
                         this.clearState(); this.cart = []; this.createdSaleId = result.sale_id; this.createdPdfUrl = result.pdf_url;
+                        this.resendInvoiceUrl = result.resend_invoice_url || '';
+                        this.invoiceEmailError = (result.invoice_email_sent === false)
+                            ? (result.invoice_email_error || 'Unbekannter Fehler')
+                            : '';
                         this.customer = { first_name: '', last_name: '', address: '', zip_code: '', city: '', email: '' };
                         localStorage.removeItem('pos_sumup_ts');
                         this.resetIdempotencyKey();
@@ -414,7 +419,7 @@
                 }
             },
             printReceipt() { if(this.createdPdfUrl) window.open(this.createdPdfUrl, '_blank'); },
-            closeSuccess() { this.showSuccessModal = false; this.createdSaleId = null; this.createdPdfUrl = ''; this.searchQuery = ''; this.clearState(); this.focusSearch(); },
+            closeSuccess() { this.showSuccessModal = false; this.createdSaleId = null; this.createdPdfUrl = ''; this.invoiceEmailError = ''; this.resendInvoiceUrl = ''; this.searchQuery = ''; this.clearState(); this.focusSearch(); },
             showNotification(message, type = 'success') { this.toast.message = message; this.toast.type = type; this.toast.show = true; setTimeout(() => { this.toast.show = false; }, 4000); }
         }
     }
@@ -601,6 +606,16 @@
                 <div class="text-success mb-3" style="font-size: 3rem;"><i class="fas fa-check-circle"></i></div>
                 <h4>Vielen Dank!</h4>
                 <p>Beleg #<span x-text="createdSaleId"></span> gespeichert.</p>
+
+                <div x-show="invoiceEmailError" class="alert alert-danger text-left mt-3" style="display: none;">
+                    <strong><i class="fas fa-exclamation-triangle"></i> Rechnungs-E-Mail nicht zugestellt.</strong>
+                    <div class="small mt-1" x-text="invoiceEmailError"></div>
+                    <div class="small mt-1">Der Verkauf wurde gebucht, aber die E-Mail konnte vom Mailserver nicht angenommen werden &mdash; bitte E-Mail-Adresse pr&uuml;fen und erneut senden.</div>
+                    <a :href="resendInvoiceUrl" target="_blank" class="btn btn-sm btn-danger mt-2">
+                        <i class="fas fa-edit"></i> Adresse korrigieren &amp; erneut senden
+                    </a>
+                </div>
+
                 <div class="mt-4">
                     <button class="btn btn-warning btn-lg btn-block mb-2" @click="printReceipt()"><i class="fas fa-print"></i> Quittung / Rechnung (PDF)</button>
                     <button class="btn btn-outline-primary btn-lg btn-block" @click="closeSuccess()"><i class="fas fa-cart-plus"></i> Neuer Einkauf</button>

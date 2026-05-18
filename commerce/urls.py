@@ -24,6 +24,9 @@ urlpatterns = [
     # NEU: A4 Rechnung PDF Download (falls man sie manuell nochmal braucht)
     path('sale/<int:sale_id>/invoice-pdf/', views.sale_invoice_pdf_view, name='sale_invoice_pdf'),
 
+    # Rechnung erneut senden (Korrektur falscher Kundendaten)
+    path('sale/<int:sale_id>/resend-invoice/', views.sale_resend_invoice_view, name='sale_resend_invoice'),
+
     path('mwst-report/', views.mwst_report_view, name='mwst_report'),
     path('webhooks/shopify/orders-paid/', views.shopify_webhook, name='shopify_webhook'),
 ]

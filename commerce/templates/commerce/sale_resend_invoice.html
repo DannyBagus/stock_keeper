@@ -1,0 +1,100 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block content %}
+<div class="col-12 col-md-8 offset-md-2">
+    <div class="card card-primary card-outline">
+        <div class="card-header">
+            <h3 class="card-title">
+                <i class="fas fa-paper-plane mr-2"></i>
+                Rechnung erneut senden &mdash; Sale #{{ sale.id }}
+            </h3>
+        </div>
+        <div class="card-body">
+            <p class="text-muted">
+                Korrigieren Sie die Rechnungsadresse / E-Mail-Adresse und versenden Sie die Rechnung erneut.
+                Beim Klick wird das PDF mit den aktuellen Daten neu generiert und versendet (mit CC an info@mileja.ch).
+            </p>
+
+            <div class="mb-3">
+                <strong>Status letzter Versuch:</strong>
+                <span class="badge badge-{% if sale.invoice_status == 'SENT' or sale.invoice_status == 'RESENT' %}success{% elif sale.invoice_status == 'FAILED' %}danger{% else %}secondary{% endif %}">
+                    {{ sale.get_invoice_status_display }}
+                </span>
+                {% if sale.invoice_sent_at %}
+                    <span class="text-muted ml-2">({{ sale.invoice_sent_at|date:"d.m.Y H:i" }})</span>
+                {% endif %}
+            </div>
+
+            {% if sale.invoice_last_error %}
+                <div class="alert alert-warning">
+                    <strong>Letzter Fehler:</strong>
+                    <pre class="mb-0" style="white-space: pre-wrap;">{{ sale.invoice_last_error }}</pre>
+                </div>
+            {% endif %}
+
+            {% if messages %}
+                {% for message in messages %}
+                    <div class="alert alert-{% if message.tags == 'error' %}danger{% else %}{{ message.tags }}{% endif %}">
+                        {{ message }}
+                    </div>
+                {% endfor %}
+            {% endif %}
+
+            <form method="POST">
+                {% csrf_token %}
+
+                <div class="form-row">
+                    <div class="form-group col-md-6">
+                        <label>Vorname *</label>
+                        <input type="text" name="first_name" class="form-control"
+                               value="{{ sale.customer_first_name }}" required>
+                    </div>
+                    <div class="form-group col-md-6">
+                        <label>Nachname *</label>
+                        <input type="text" name="last_name" class="form-control"
+                               value="{{ sale.customer_last_name }}" required>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Adresse / Strasse *</label>
+                    <input type="text" name="address" class="form-control"
+                           value="{{ sale.customer_address }}" required>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group col-md-4">
+                        <label>PLZ *</label>
+                        <input type="text" name="zip_code" class="form-control"
+                               value="{{ sale.customer_zip_code }}" required>
+                    </div>
+                    <div class="form-group col-md-8">
+                        <label>Ort *</label>
+                        <input type="text" name="city" class="form-control"
+                               value="{{ sale.customer_city }}" required>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>E-Mail-Adresse *</label>
+                    <input type="email" name="email" class="form-control"
+                           value="{{ sale.customer_email }}" required>
+                    <small class="form-text text-muted">
+                        Die Rechnung wird an diese Adresse gesendet, mit CC an info@mileja.ch.
+                    </small>
+                </div>
+
+                <div class="mt-4">
+                    <button type="submit" class="btn btn-primary btn-lg">
+                        <i class="fas fa-paper-plane"></i> Rechnung erneut senden
+                    </button>
+                    <a href="{{ admin_change_url }}" class="btn btn-outline-secondary btn-lg ml-2">
+                        <i class="fas fa-times"></i> Abbrechen
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

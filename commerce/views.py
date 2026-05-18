@@ -11,7 +11,11 @@ logger = logging.getLogger(__name__)
 from django.shortcuts import render, get_object_or_404, redirect
 from django.http import JsonResponse, HttpResponse, HttpResponseForbidden
 from django.contrib import admin
+from django.contrib import messages
 from django.contrib.auth import get_user_model
+from django.core.validators import validate_email
+from django.core.exceptions import ValidationError
+from django.urls import reverse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST, require_GET
 from django.contrib.admin.views.decorators import staff_member_required
@@ -325,29 +329,52 @@ def api_checkout(request):
         sale.save()
 
         # PDF URL Logic (Standard: Thermo-Bon)
-        pdf_url = f"/commerce/sale/{sale.id}/pdf/" 
+        pdf_url = f"/commerce/sale/{sale.id}/pdf/"
 
         # 4. Spezifische Logik für RECHNUNG
+        invoice_email_sent = None
+        invoice_email_error = ''
         if payment_method == 'INVOICE' and customer_data:
             # CLEANING: Leerzeichen entfernen
-            if 'email' in customer_data:
-                customer_data['email'] = customer_data['email'].strip()
-                
+            email = (customer_data.get('email') or '').strip()
+            customer_data['email'] = email
+
+            # Kundendaten am Sale persistieren BEVOR wir versenden
+            sale.customer_first_name = (customer_data.get('first_name') or '').strip()
+            sale.customer_last_name = (customer_data.get('last_name') or '').strip()
+            sale.customer_address = (customer_data.get('address') or '').strip()
+            sale.customer_zip_code = (customer_data.get('zip_code') or '').strip()
+            sale.customer_city = (customer_data.get('city') or '').strip()
+            sale.customer_email = email
+            sale.save()
+
             success, info = send_invoice_email(sale, customer_data)
-            if not success:
-                print(f"Mail Error: {info}")
-            
-            # Optional: Falls man direkt das A4 PDF zurückgeben will
-            # pdf_url = f"/commerce/sale/{sale.id}/invoice-pdf/"
+            invoice_email_sent = success
+            if success:
+                sale.invoice_status = Sale.InvoiceStatus.SENT
+                sale.invoice_sent_at = timezone.now()
+                sale.invoice_last_error = ''
+            else:
+                sale.invoice_status = Sale.InvoiceStatus.FAILED
+                sale.invoice_last_error = info or 'Unbekannter Fehler'
+                invoice_email_error = sale.invoice_last_error
+                logger.warning("invoice.email_failed sale=%s err=%s", sale.id, info)
+            sale.save(update_fields=['invoice_status', 'invoice_sent_at', 'invoice_last_error'])
 
         logger.info("checkout.success sale=%s user=%s method=%s tx=%s gross=%s",
                     sale.id, request.user.id, payment_method, transaction_code or '-', total_gross)
 
-        return JsonResponse({
+        response_data = {
             'success': True,
             'sale_id': sale.id,
-            'pdf_url': pdf_url
-        })
+            'pdf_url': pdf_url,
+            'admin_url': reverse('admin:commerce_sale_change', args=[sale.id]),
+            'resend_invoice_url': reverse('sale_resend_invoice', args=[sale.id]),
+        }
+        if invoice_email_sent is not None:
+            response_data['invoice_email_sent'] = invoice_email_sent
+            response_data['invoice_email_error'] = invoice_email_error
+        return JsonResponse(response_data)
 
     except Exception as e:
         logger.exception("checkout.error user=%s method=%s tx=%s",
@@ -376,31 +403,97 @@ def sale_receipt_pdf_view(request, sale_id):
 
 @staff_member_required
 def sale_invoice_pdf_view(request, sale_id):
-    """ A4 Rechnung manuell herunterladen """
+    """ A4 Rechnung herunterladen (mit gespeicherten Kundendaten, sonst Dummy) """
     sale = get_object_or_404(Sale, id=sale_id)
-    
-    # Dummy Kunde für manuellen Nachdruck (da wir keine Kundendaten im Sale speichern)
-    customer_dummy = {
-        'first_name': 'Kunde',
-        'last_name': '(Nachdruck)',
-        'address': '---',
-        'zip_code': '----',
-        'city': '---',
-        'email': ''
-    }
-    
+
+    if sale.customer_last_name or sale.customer_first_name:
+        customer_data = sale.customer_data_dict()
+    else:
+        # Fallback für Alt-Sales ohne gespeicherte Kundendaten
+        customer_data = {
+            'first_name': 'Kunde',
+            'last_name': '(Nachdruck)',
+            'address': '---',
+            'zip_code': '----',
+            'city': '---',
+            'email': ''
+        }
+
     try:
         from .utils import format_swiss_qr_content
-        qr_payload = format_swiss_qr_content(sale, customer_dummy)
+        qr_payload = format_swiss_qr_content(sale, customer_data)
         qr_svg = generate_qr_code_svg(qr_payload)
     except Exception as e:
         qr_svg = None
-        print(f"QR Error: {e}")
-    
-    pdf_content = generate_invoice_pdf(sale, customer_dummy, qr_svg)
+        logger.warning("invoice_pdf.qr_error sale=%s err=%s", sale.id, e)
+
+    pdf_content = generate_invoice_pdf(sale, customer_data, qr_svg)
     response = HttpResponse(pdf_content, content_type='application/pdf')
     response['Content-Disposition'] = f'inline; filename="Rechnung_{sale.id}.pdf"'
     return response
+
+
+@staff_member_required
+def sale_resend_invoice_view(request, sale_id):
+    """Korrigieren der Rechnungs-Kundendaten + erneuter Mail-Versand."""
+    sale = get_object_or_404(Sale, id=sale_id)
+
+    if request.method == 'POST':
+        first_name = (request.POST.get('first_name') or '').strip()
+        last_name = (request.POST.get('last_name') or '').strip()
+        address = (request.POST.get('address') or '').strip()
+        zip_code = (request.POST.get('zip_code') or '').strip()
+        city = (request.POST.get('city') or '').strip()
+        email = (request.POST.get('email') or '').strip()
+
+        errors = []
+        for label, value in (('Vorname', first_name), ('Nachname', last_name),
+                             ('Adresse', address), ('PLZ', zip_code),
+                             ('Ort', city), ('E-Mail', email)):
+            if not value:
+                errors.append(f"{label} fehlt.")
+        if email:
+            try:
+                validate_email(email)
+            except ValidationError:
+                errors.append("E-Mail-Adresse ist ungültig.")
+
+        if errors:
+            for e in errors:
+                messages.error(request, e)
+        else:
+            sale.customer_first_name = first_name
+            sale.customer_last_name = last_name
+            sale.customer_address = address
+            sale.customer_zip_code = zip_code
+            sale.customer_city = city
+            sale.customer_email = email
+            sale.save()
+
+            success, info = send_invoice_email(sale, sale.customer_data_dict())
+            if success:
+                sale.invoice_status = Sale.InvoiceStatus.RESENT
+                sale.invoice_sent_at = timezone.now()
+                sale.invoice_last_error = ''
+                sale.save(update_fields=['invoice_status', 'invoice_sent_at', 'invoice_last_error'])
+                messages.success(request, f"Rechnung erneut an {email} versendet.")
+                logger.info("invoice.resent sale=%s to=%s user=%s",
+                            sale.id, email, request.user.id)
+                return redirect(reverse('admin:commerce_sale_change', args=[sale.id]))
+            else:
+                sale.invoice_status = Sale.InvoiceStatus.FAILED
+                sale.invoice_last_error = info or 'Unbekannter Fehler'
+                sale.save(update_fields=['invoice_status', 'invoice_last_error'])
+                messages.error(request, f"Versand fehlgeschlagen: {sale.invoice_last_error}")
+                logger.warning("invoice.resend_failed sale=%s err=%s", sale.id, info)
+
+    context = admin.site.each_context(request)
+    context.update({
+        'sale': sale,
+        'title': f'Rechnung erneut senden — Sale #{sale.id}',
+        'admin_change_url': reverse('admin:commerce_sale_change', args=[sale.id]),
+    })
+    return render(request, 'commerce/sale_resend_invoice.html', context)
 
 # --- PURCHASE CHECKOUT ---
 

@@ -131,13 +131,34 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
 
 @admin.register(Sale)
 class SaleAdmin(admin.ModelAdmin):
-    actions = ['action_generate_receipt', 'action_refund_sale'] 
-    
-    list_display = ('id', 'date', 'total_amount_gross', 'payment_method', 'channel', 'status', 'created_by', 'transaction_id')
-    list_filter = (SuspectedDuplicateFilter, 'date', 'payment_method', 'channel', 'status', 'created_by')
-    search_fields = ('transaction_id', 'idempotency_key', 'id')
+    actions = ['action_generate_receipt', 'action_refund_sale']
+    change_form_template = 'admin/commerce/sale/change_form.html'
+
+    list_display = ('id', 'date', 'total_amount_gross', 'payment_method', 'channel', 'status', 'invoice_status', 'customer_email', 'created_by', 'transaction_id')
+    list_filter = (SuspectedDuplicateFilter, 'date', 'payment_method', 'channel', 'status', 'invoice_status', 'created_by')
+    search_fields = ('transaction_id', 'idempotency_key', 'id', 'customer_email', 'customer_last_name')
     inlines = [SaleItemInline]
-    readonly_fields = ('total_amount_net', 'total_amount_gross', 'transaction_id', 'idempotency_key', 'created_by', 'channel', 'status')
+    readonly_fields = (
+        'total_amount_net', 'total_amount_gross', 'transaction_id', 'idempotency_key',
+        'created_by', 'channel', 'status',
+        'invoice_status', 'invoice_sent_at', 'invoice_last_error',
+    )
+    fieldsets = (
+        ('Verkauf', {
+            'fields': ('date', 'payment_method', 'channel', 'status', 'created_by',
+                       'total_amount_net', 'total_amount_gross',
+                       'transaction_id', 'idempotency_key'),
+        }),
+        ('Rechnungsempfänger', {
+            'fields': ('customer_first_name', 'customer_last_name',
+                       'customer_address', 'customer_zip_code', 'customer_city',
+                       'customer_email'),
+            'description': 'Nur bei Zahlungsart Rechnung relevant. Korrekturen hier wirken auf "Rechnung erneut senden".',
+        }),
+        ('Rechnungs-Versand', {
+            'fields': ('invoice_status', 'invoice_sent_at', 'invoice_last_error'),
+        }),
+    )
     
     def save_related(self, request, form, formsets, change):
         super().save_related(request, form, formsets, change)

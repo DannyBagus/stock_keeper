@@ -140,6 +140,26 @@ class Sale(models.Model):
         help_text="Client-generierter Key, verhindert Doppelbuchungen durch Retries/Doppelklicks"
     )
 
+    # Rechnungsempfänger (nur bei payment_method=INVOICE befüllt)
+    customer_first_name = models.CharField(max_length=100, blank=True, default='')
+    customer_last_name = models.CharField(max_length=100, blank=True, default='')
+    customer_address = models.CharField(max_length=200, blank=True, default='')
+    customer_zip_code = models.CharField(max_length=20, blank=True, default='')
+    customer_city = models.CharField(max_length=100, blank=True, default='')
+    customer_email = models.EmailField(blank=True, default='')
+
+    class InvoiceStatus(models.TextChoices):
+        NOT_APPLICABLE = 'NA', 'Nicht anwendbar'
+        SENT = 'SENT', 'Versendet'
+        FAILED = 'FAILED', 'Versand fehlgeschlagen'
+        RESENT = 'RESENT', 'Erneut versendet'
+
+    invoice_status = models.CharField(
+        max_length=10, choices=InvoiceStatus.choices, default=InvoiceStatus.NOT_APPLICABLE
+    )
+    invoice_sent_at = models.DateTimeField(null=True, blank=True)
+    invoice_last_error = models.TextField(blank=True, default='')
+
     class Meta:
         constraints = [
             models.UniqueConstraint(
@@ -155,6 +175,17 @@ class Sale(models.Model):
 
     def __str__(self):
         return f"Sale-{self.id} | {self.date.date()}"
+
+    def customer_data_dict(self):
+        """Liefert das von send_invoice_email/generate_invoice_pdf erwartete Dict-Format."""
+        return {
+            'first_name': self.customer_first_name,
+            'last_name': self.customer_last_name,
+            'address': self.customer_address,
+            'zip_code': self.customer_zip_code,
+            'city': self.customer_city,
+            'email': self.customer_email,
+        }
 
     def calculate_totals(self):
         total_gross = sum(item.total_price_gross for item in self.items.all())
