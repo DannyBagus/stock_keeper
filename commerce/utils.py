@@ -298,9 +298,10 @@ def send_invoice_email(sale, customer_data):
             text_content, # Plain Text version als Default
             from_email,
             to_email,
-            cc=cc_email
+            cc=cc_email,
+            headers={'X-Stock-Keeper-Sale-Id': str(sale.id)},
         )
-        
+
         # HTML Version hinzufügen
         msg.attach_alternative(html_content, "text/html")
 

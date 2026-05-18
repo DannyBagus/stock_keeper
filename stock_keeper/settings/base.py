@@ -147,6 +147,19 @@ LOGIN_REDIRECT_URL = '/'                # Nach Login zum Custom Dashboard
 LOGOUT_REDIRECT_URL = '/admin/login/'   # Nach Logout zum Login
 
 
+# --- IMAP (für Bounce-Polling der Rechnungs-Mails) ---
+# Reuse der SMTP-Credentials. IMAP_PASSWORD fällt auf EMAIL_PASSWORD zurück.
+IMAP_HOST = os.environ.get('IMAP_HOST', 'mail.infomaniak.com')
+IMAP_PORT = int(os.environ.get('IMAP_PORT', '993'))
+IMAP_USER = os.environ.get('IMAP_USER', 'admin@mileja.ch')
+IMAP_PASSWORD = os.environ.get('IMAP_PASSWORD') or os.environ.get('EMAIL_PASSWORD')
+IMAP_BOUNCE_FOLDER = os.environ.get('IMAP_BOUNCE_FOLDER', 'INBOX')
+INVOICE_BOUNCE_NOTIFICATION_RECIPIENTS = ['hebammen@mileja.ch']
+
+# Stock-Keeper-Basis-URL (für Resend-Direktlinks in Notification-Mails)
+STOCK_KEEPER_BASE_URL = os.environ.get('STOCK_KEEPER_BASE_URL', 'https://stock-keeper.mileja.ch')
+
+
 # --- JAZZMIN KONFIGURATION ---
 JAZZMIN_SETTINGS = {
     "site_title": "Stock Keeper",
