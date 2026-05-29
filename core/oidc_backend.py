@@ -1,4 +1,9 @@
+from django.contrib.auth.models import Group
 from mozilla_django_oidc.auth import OIDCAuthenticationBackend
+
+# Django-Gruppe mit Mitarbeiterinnen-Standardperms (view/add/change, ohne delete).
+# Wird per Datamigration 0007 angelegt.
+MITARBEITERIN_GROUP = 'Stockkeeper-Mitarbeiterin'
 
 
 class StockKeeperOIDCBackend(OIDCAuthenticationBackend):
@@ -7,6 +12,8 @@ class StockKeeperOIDCBackend(OIDCAuthenticationBackend):
     Matcht Authentik-User per Email auf Django-User. Setzt is_staff anhand der
     Authentik-Gruppe 'mitarbeiterin' (Standard-Praxisteam) bzw. 'geschaeftsfuehrung'.
     Geschäftsführung wird zusätzlich als Superuser markiert.
+    Mitarbeiterinnen werden in die Django-Gruppe MITARBEITERIN_GROUP gepackt,
+    damit sie die nötigen Permissions (Sidebar, Produktsuche etc.) haben.
     """
 
     def filter_users_by_claims(self, claims):
@@ -37,3 +44,15 @@ class StockKeeperOIDCBackend(OIDCAuthenticationBackend):
         user.is_staff = is_team
         user.is_superuser = is_gf
         user.save(update_fields=['first_name', 'last_name', 'email', 'is_staff', 'is_superuser'])
+
+        # Gruppenzuweisung: Mitarbeiterinnen ohne Superuser-Status brauchen die
+        # Default-Perms, sonst ist die Jazzmin-Sidebar leer und die Produktsuche
+        # liefert 403. Geschäftsführung hat als Superuser eh alles.
+        try:
+            mitarbeiter_group = Group.objects.get(name=MITARBEITERIN_GROUP)
+        except Group.DoesNotExist:
+            return
+        if is_team and not is_gf:
+            user.groups.add(mitarbeiter_group)
+        else:
+            user.groups.remove(mitarbeiter_group)

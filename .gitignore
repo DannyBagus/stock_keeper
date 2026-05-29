@@ -61,3 +61,6 @@ docker-compose.override.yml
 Thumbs.db
 
 CLAUDE.md
+
+# Snapshot-Dumps (manuelle Backups vor invasiven Datenmigrationen, nicht committen)
+.auth_user_backup_*.json
