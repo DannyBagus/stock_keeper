@@ -38,6 +38,65 @@
         height: 300px;
         width: 100%;
     }
+
+    /* Verkaufs-Heatmap (Wochentag x Uhrzeit) */
+    .heatmap-toggle .btn { font-size: 0.78rem; }
+    .heatmap-wrap { overflow-x: auto; }
+    table.heatmap {
+        border-collapse: separate;
+        border-spacing: 3px;
+        width: 100%;
+        font-size: 0.8rem;
+    }
+    table.heatmap th {
+        font-weight: 600;
+        color: #555;
+        text-align: center;
+        padding: 2px 4px;
+        white-space: nowrap;
+    }
+    table.heatmap th.row-head {
+        text-align: right;
+        padding-right: 8px;
+        color: #333;
+    }
+    table.heatmap td.cell {
+        text-align: center;
+        padding: 6px 4px;
+        border-radius: 5px;
+        color: #333;
+        min-width: 46px;
+        font-variant-numeric: tabular-nums;
+        cursor: default;
+        transition: outline 0.05s;
+    }
+    table.heatmap td.cell.zero { color: #bbb; }
+    table.heatmap td.cell:hover { outline: 2px solid #4e73df; }
+    table.heatmap td.total {
+        text-align: center;
+        font-weight: 700;
+        color: #333;
+        background: #f1f3f5;
+        border-radius: 5px;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+    }
+    table.heatmap th.corner { background: transparent; }
+    .heatmap-legend {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 0.75rem;
+        color: #777;
+        margin-top: 10px;
+    }
+    .heatmap-legend .bar {
+        height: 12px;
+        width: 160px;
+        border-radius: 6px;
+        background: linear-gradient(to right, #fff5eb, #fdae6b, #d94801);
+        border: 1px solid #eee;
+    }
 </style>
 {% endblock %}
 
@@ -96,6 +155,40 @@
                 <!-- FIX: Canvas in Container gewickelt -->
                 <div class="chart-container">
                     <canvas id="catChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Verkaufs-Heatmap Row -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="dashboard-card">
+                <div class="d-flex flex-wrap justify-content-between align-items-center mb-2">
+                    <h5 class="mb-2">Kassen-Verkäufe nach Wochentag & Uhrzeit</h5>
+                    <div class="d-flex flex-wrap heatmap-toggle" style="gap: 8px;">
+                        <div class="btn-group btn-group-sm" role="group" id="hmMetric">
+                            <button type="button" class="btn btn-primary" data-metric="count">Anzahl</button>
+                            <button type="button" class="btn btn-outline-primary" data-metric="sum">Umsatz CHF</button>
+                        </div>
+                        <div class="btn-group btn-group-sm" role="group" id="hmBasis">
+                            <button type="button" class="btn btn-secondary" data-basis="avg">Ø pro Wochentag</button>
+                            <button type="button" class="btn btn-outline-secondary" data-basis="total">Summe (Total)</button>
+                        </div>
+                    </div>
+                </div>
+                <p class="text-muted mb-3" style="font-size: 0.82rem;" id="hmCaption">
+                    Hilft bei der Optimierung der Öffnungszeiten: dunkle Felder = umsatzstarke Slots,
+                    helle/leere Felder = kaum oder keine Verkäufe.
+                </p>
+                <div class="heatmap-wrap">
+                    <div id="heatmap"></div>
+                </div>
+                <div class="heatmap-legend">
+                    <span>wenig</span>
+                    <span class="bar"></span>
+                    <span>viel</span>
+                    <span class="ml-3" id="hmRange"></span>
                 </div>
             </div>
         </div>
@@ -198,5 +291,118 @@
             }
         }
     });
+
+    // ===== Verkaufs-Heatmap (Wochentag x Uhrzeit) =====
+    (function () {
+        const HM = {{ heatmap_json|safe }};
+        const root = document.getElementById('heatmap');
+        if (!HM.has_data) {
+            root.innerHTML = '<p class="text-muted text-center my-4">Noch keine Kassen-Verkäufe für die Auswertung vorhanden.</p>';
+            return;
+        }
+
+        let metric = 'count';   // 'count' | 'sum'
+        let basis = 'avg';      // 'avg'  | 'total'
+
+        // Zugriff auf den aktuell gewählten Wert einer Zelle
+        function valOf(cell) {
+            if (metric === 'count') return basis === 'avg' ? cell.avg_count : cell.count;
+            return basis === 'avg' ? cell.avg_sum : cell.sum;
+        }
+
+        // Lineare Farb-Interpolation hell (#fff5eb) -> kräftig (#d94801)
+        function heatColor(t) {
+            if (t <= 0) return '#f8f9fa';
+            const a = [255, 245, 235], b = [217, 72, 1];
+            const r = Math.round(a[0] + (b[0] - a[0]) * t);
+            const g = Math.round(a[1] + (b[1] - a[1]) * t);
+            const bl = Math.round(a[2] + (b[2] - a[2]) * t);
+            return `rgb(${r},${g},${bl})`;
+        }
+
+        function fmt(v) {
+            if (metric === 'sum') {
+                if (basis === 'avg') return v.toFixed(0);
+                return Math.round(v).toLocaleString('de-CH');
+            }
+            // Anzahl
+            return basis === 'avg' ? v.toFixed(1) : String(v);
+        }
+
+        // Lookup-Map (d,h) -> cell
+        const map = {};
+        HM.cells.forEach(c => { map[c.d + '_' + c.h] = c; });
+
+        function render() {
+            // Max-Wert über alle Zellen für die Farbskala
+            let maxV = 0;
+            HM.cells.forEach(c => { const v = valOf(c); if (v > maxV) maxV = v; });
+
+            let html = '<table class="heatmap"><thead><tr><th class="corner"></th>';
+            HM.hours.forEach(h => { html += `<th>${h}–${h + 1}</th>`; });
+            html += '<th class="row-head">Σ Tag</th></tr></thead><tbody>';
+
+            const colTotals = {};
+            HM.hours.forEach(h => colTotals[h] = 0);
+            let grandTotal = 0;
+
+            HM.days.forEach((dayLabel, d) => {
+                html += `<tr><th class="row-head" title="${HM.days_full[d]}">${dayLabel}</th>`;
+                let rowTotal = 0;
+                HM.hours.forEach(h => {
+                    const c = map[d + '_' + h];
+                    const v = c ? valOf(c) : 0;
+                    rowTotal += v;
+                    colTotals[h] += v;
+                    grandTotal += v;
+                    const t = maxV > 0 ? v / maxV : 0;
+                    const bg = heatColor(t);
+                    const txtCls = t > 0.55 ? 'style="color:#fff;"' : '';
+                    const zeroCls = v <= 0 ? ' zero' : '';
+                    const tip = c
+                        ? `${HM.days_full[d]} ${h}:00–${h + 1}:00\n`
+                          + `Ø ${c.avg_count.toFixed(1)} Verkäufe / ${c.avg_sum.toFixed(0)} CHF pro Tag\n`
+                          + `Total ${c.count} Verkäufe / ${c.sum.toLocaleString('de-CH')} CHF (${c.occ} ${HM.days_full[d]}e)`
+                        : '';
+                    html += `<td class="cell${zeroCls}" ${txtCls} title="${tip}" `
+                          + `style="background:${bg};${t > 0.55 ? 'color:#fff;' : ''}">`
+                          + `${v > 0 ? fmt(v) : '·'}</td>`;
+                });
+                html += `<td class="total">${fmt(rowTotal)}</td></tr>`;
+            });
+
+            // Summenzeile (pro Stunde über die ganze Woche)
+            html += '<tr><th class="row-head">Σ Std.</th>';
+            HM.hours.forEach(h => { html += `<td class="total">${fmt(colTotals[h])}</td>`; });
+            html += `<td class="total">${fmt(grandTotal)}</td></tr>`;
+            html += '</tbody></table>';
+            root.innerHTML = html;
+
+            // Caption / Einheit
+            const unit = metric === 'sum' ? 'CHF (Brutto)' : 'Verkäufe';
+            const basisTxt = basis === 'avg' ? 'Ø pro typischem Wochentag' : 'Summe gesamter Zeitraum';
+            document.getElementById('hmRange').textContent =
+                `${unit} · ${basisTxt} · Datenbasis ${HM.date_from}–${HM.date_to} (nur Ladenkasse)`;
+        }
+
+        function wire(groupId, attr, cb) {
+            const grp = document.getElementById(groupId);
+            grp.querySelectorAll('button').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    cb(btn.getAttribute(attr));
+                    grp.querySelectorAll('button').forEach(b => {
+                        const active = b === btn;
+                        const base = groupId === 'hmMetric' ? 'primary' : 'secondary';
+                        b.className = 'btn btn-' + (active ? base : 'outline-' + base);
+                    });
+                    render();
+                });
+            });
+        }
+        wire('hmMetric', 'data-metric', v => metric = v);
+        wire('hmBasis', 'data-basis', v => basis = v);
+
+        render();
+    })();
 </script>
 {% endblock %}

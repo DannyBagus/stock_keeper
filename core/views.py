@@ -10,6 +10,9 @@ from django.utils.text import slugify
 from django.views.decorators.http import require_POST
 from django.http import JsonResponse, HttpResponse
 from decimal import Decimal
+from collections import defaultdict
+from datetime import timedelta
+from zoneinfo import ZoneInfo
 import csv
 import json
 from .models import Product, Category, StockMovement
@@ -60,6 +63,82 @@ def dashboard_view(request):
     cat_labels = [c.name for c in cat_qs]
     cat_data = [c.p_count for c in cat_qs]
 
+    # 2b. Kassen-Verkäufe nach Wochentag & Uhrzeit (Heatmap)
+    # Ziel: Öffnungszeiten optimieren -> wann finden POS-Verkäufe statt?
+    # Nur Ladenlokal (POS) + abgeschlossene Verkäufe; Zeit lokal (Europe/Zurich).
+    LOCAL_TZ = ZoneInfo('Europe/Zurich')
+    pos_qs = Sale.objects.filter(
+        channel=Sale.SalesChannel.POS,
+        status=Sale.Status.COMPLETED,
+    ).values_list('date', 'total_amount_gross')
+
+    cell_count = defaultdict(int)      # (weekday, hour) -> Anzahl Verkäufe
+    cell_sum = defaultdict(float)      # (weekday, hour) -> Brutto CHF
+    hours_present = set()
+    min_date = None
+    max_date = None
+
+    for dt, gross in pos_qs:
+        if dt is None:
+            continue
+        # USE_TZ=True -> dt ist aware (UTC); nach lokaler Zeit umrechnen
+        local = dt.astimezone(LOCAL_TZ) if timezone.is_aware(dt) \
+            else dt.replace(tzinfo=ZoneInfo('UTC')).astimezone(LOCAL_TZ)
+        wd = local.weekday()   # Montag=0 ... Sonntag=6
+        h = local.hour
+        cell_count[(wd, h)] += 1
+        cell_sum[(wd, h)] += float(gross or 0)
+        hours_present.add(h)
+        d = local.date()
+        if min_date is None or d < min_date:
+            min_date = d
+        if max_date is None or d > max_date:
+            max_date = d
+
+    # Anzahl Vorkommen jedes Wochentags im Datenzeitraum (für Ø je typischen Tag)
+    weekday_occurrences = [0] * 7
+    if min_date and max_date:
+        cur = min_date
+        while cur <= max_date:
+            weekday_occurrences[cur.weekday()] += 1
+            cur += timedelta(days=1)
+
+    # Anzuzeigende Stundenspanne: von erster bis letzter Stunde mit Aktivität
+    if hours_present:
+        hour_lo, hour_hi = min(hours_present), max(hours_present)
+    else:
+        hour_lo, hour_hi = 8, 19
+    hours = list(range(hour_lo, hour_hi + 1))
+
+    days_short = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So']
+    days_full = ['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag']
+
+    cells = []
+    for wd in range(7):
+        occ = weekday_occurrences[wd]
+        for h in hours:
+            c = cell_count[(wd, h)]
+            s = cell_sum[(wd, h)]
+            cells.append({
+                'd': wd,
+                'h': h,
+                'count': c,
+                'sum': round(s, 2),
+                'occ': occ,
+                'avg_count': round(c / occ, 2) if occ else 0,
+                'avg_sum': round(s / occ, 2) if occ else 0,
+            })
+
+    heatmap = {
+        'days': days_short,
+        'days_full': days_full,
+        'hours': hours,
+        'cells': cells,
+        'has_data': bool(cells) and bool(cell_count),
+        'date_from': min_date.strftime('%d.%m.%Y') if min_date else None,
+        'date_to': max_date.strftime('%d.%m.%Y') if max_date else None,
+    }
+
     # 3. Pendente Bestellungen
     pending_orders = PurchaseOrder.objects.exclude(
         status__in=[PurchaseOrder.Status.RECEIVED, PurchaseOrder.Status.CANCELLED]
@@ -81,6 +160,7 @@ def dashboard_view(request):
         'revenues_json': json.dumps(revenues),
         'cat_labels_json': json.dumps(cat_labels),
         'cat_data_json': json.dumps(cat_data),
+        'heatmap_json': json.dumps(heatmap),
         'pending_orders': pending_orders,
         'total_products': total_products,
         'low_stock': low_stock,
