@@ -121,11 +121,11 @@ class SumUpPayout(models.Model):
         only_sk = [i for i in items if i.match_status == 'ONLY_SK']
 
         # net_matches: das Nettototal deckt sich mit der Bankgutschrift.
-        # is_balanced: zusätzlich keine offenen Positionen und kein Refund-Abzug.
+        # is_balanced: zusätzlich keine offenen Positionen. Refund-Abzüge sind
+        # erklärte Gebühren (eigene Kachel) und gelten NICHT als offener Punkt.
         net_matches = net_delta is not None and abs(net_delta) <= BALANCE_TOLERANCE
         has_open_items = bool(gap or only_sumup or only_sk)
-        has_notices = bool(deduction_lines)
-        is_balanced = net_matches and not has_open_items and not has_notices
+        is_balanced = net_matches and not has_open_items
 
         return {
             'laden_total': laden,
@@ -143,7 +143,6 @@ class SumUpPayout(models.Model):
             'total_matched': sum((i.sumup_amount or Decimal('0') for i in matched), Decimal('0')),
             'net_matches': net_matches,
             'has_open_items': has_open_items,
-            'has_notices': has_notices,
             'is_balanced': is_balanced,
         }
 

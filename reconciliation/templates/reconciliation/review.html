@@ -43,33 +43,14 @@
         {% endif %}
     </div>
     {% else %}
-    {# Nettototal stimmt; nur informative Hinweise (Refund-Abzüge / offene Tabellen-Positionen) #}
+    {# Nettototal stimmt, aber offene Tabellen-Positionen brauchen Nacharbeit #}
     <div class="alert alert-warning">
-        <h5 class="mb-2"><i class="fas fa-info-circle mr-2"></i> Nettototal stimmt mit der Bankgutschrift überein</h5>
+        <h5 class="mb-2"><i class="fas fa-info-circle mr-2"></i> Nettototal stimmt — offene Positionen in der Tabelle</h5>
         <div>
             Berechnetes Nettototal <strong>CHF {{ computed_net }}</strong>
             = Bankgutschrift <strong>CHF {{ payout.bank_credit_amount }}</strong> (Differenz CHF {{ net_delta }}).
-            Die Auszahlung ist vollständig erklärt — folgende Punkte dienen nur der Information.
+            Offen: {{ only_sumup_count }} × nur SumUp, {{ only_sk_count }} × nur SK, {{ gap_count }} × Differenz (siehe Tabelle).
         </div>
-        {% if deduction_lines %}
-        <hr class="my-2">
-        <strong>Refund-Abzüge ({{ deduction_lines|length }}, total CHF {{ refund_deductions }}):</strong>
-        <ul class="mb-2">
-            {% for i in deduction_lines %}
-            <li>
-                Auf Auszahlungszeile <code>{{ i.sumup_tx_code }}</code>{% if i.sale %} (Sale <a href="/admin/commerce/sale/{{ i.sale.pk }}/change/" target="_blank">#{{ i.sale.pk }}</a>){% endif %}
-                wurde <strong>CHF {{ i.sumup_refund_deduction }}</strong> abgezogen.
-                Das ist die <strong>nicht erstattete Gebühr einer Rückerstattung</strong> (eine andere
-                Transaktion wurde rückerstattet) und zählt wie eine SumUp-Gebühr — keine Korrektur an
-                diesem Verkauf nötig.
-            </li>
-            {% endfor %}
-        </ul>
-        {% endif %}
-        {% if only_sumup_count or only_sk_count %}
-        <hr class="my-2">
-        <div>Offen in der Tabelle: {{ only_sumup_count }} × nur SumUp, {{ only_sk_count }} × nur SK.</div>
-        {% endif %}
     </div>
     {% endif %}
 
@@ -138,7 +119,7 @@
 
     <!-- Umsatz-Split -->
     <div class="row mb-3">
-        <div class="col-md-4">
+        <div class="col-md-3">
             <div class="info-box">
                 <span class="info-box-icon bg-info"><i class="fas fa-store"></i></span>
                 <div class="info-box-content">
@@ -147,7 +128,7 @@
                 </div>
             </div>
         </div>
-        <div class="col-md-4">
+        <div class="col-md-3">
             <div class="info-box">
                 <span class="info-box-icon bg-info"><i class="fas fa-coffee"></i></span>
                 <div class="info-box-content">
@@ -156,12 +137,21 @@
                 </div>
             </div>
         </div>
-        <div class="col-md-4">
+        <div class="col-md-3">
             <div class="info-box">
                 <span class="info-box-icon bg-secondary"><i class="fas fa-money-bill"></i></span>
                 <div class="info-box-content">
                     <span class="info-box-text">SumUp Gebühren</span>
                     <span class="info-box-number">CHF {{ total_fees }}</span>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="info-box">
+                <span class="info-box-icon bg-warning"><i class="fas fa-rotate-left"></i></span>
+                <div class="info-box-content">
+                    <span class="info-box-text" title="Nicht erstattete Gebühren von Rückerstattungen">Abzüge (Refunds)</span>
+                    <span class="info-box-number">CHF {{ refund_deductions|default:"0.00" }}</span>
                 </div>
             </div>
         </div>
