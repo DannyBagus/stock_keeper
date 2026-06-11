@@ -13,6 +13,11 @@ daher funktioniert Tier 1 nicht für historische Daten. Matching läuft über Ti
 
 Gebühren: Die SumUp Transactions API liefert kein fee_amount pro Transaktion.
 Die Gebühren kommen aus dem Payout-Objekt (payout.fee) und werden separat zugeordnet.
+
+Abgerechneter Betrag: Das Feld txn.amount ist der *ursprüngliche* Verkaufsbetrag.
+Eine spätere (Teil-)Rückerstattung erscheint dort NICHT — sie wird nur im Payout
+vom Netto abgezogen. Deshalb wird als sumup_amount der tatsächlich abgerechnete
+Betrag (Payout-Netto + Gebühr) gespeichert; gematcht wird weiterhin über txn.amount.
 """
 
 import logging
@@ -72,7 +77,8 @@ def compute_gap_pct(sk_amount: Decimal, sumup_amount: Decimal) -> Decimal:
 
 
 def run_matching(payout: SumUpPayout, sumup_transactions: list[dict],
-                 payout_fees: dict[str, Decimal] = None) -> list[ReconciliationItem]:
+                 payout_fees: dict[str, Decimal] = None,
+                 payout_settled: dict[str, Decimal] = None) -> list[ReconciliationItem]:
     """
     Hauptfunktion: Führt das Matching für einen Payout durch.
 
@@ -80,11 +86,15 @@ def run_matching(payout: SumUpPayout, sumup_transactions: list[dict],
         payout: SumUpPayout-Objekt
         sumup_transactions: Liste von SumUp-Transaktionsdaten
         payout_fees: Mapping von transaction_code → fee (aus Payouts)
+        payout_settled: Mapping von transaction_code → tatsächlich abgerechneter
+            Bruttobetrag (Payout-Netto + Gebühr). Fällt eine Teilrückerstattung an,
+            ist dieser Wert kleiner als txn.amount.
     """
     if not payout.period_start or not payout.period_end:
         raise ValueError("Payout hat keine Periode — bitte zuerst Periode ermitteln")
 
     payout_fees = payout_fees or {}
+    payout_settled = payout_settled or {}
 
     # Stock Keeper Sales für den Zeitraum laden
     sk_sales = list(
@@ -113,10 +123,12 @@ def run_matching(payout: SumUpPayout, sumup_transactions: list[dict],
         if foreign_id and foreign_id in sale_by_id:
             sale = sale_by_id[foreign_id]
             sk_amount = Decimal(str(sale.total_amount_gross))
-            sumup_amount = Decimal(str(txn.get('amount', 0)))
+            tx_code = txn.get('transaction_code', '')
+            txn_amount = Decimal(str(txn.get('amount', 0)))
+            # Tatsächlich abgerechneter Betrag (inkl. evtl. Teilrückerstattung)
+            sumup_amount = payout_settled.get(tx_code, txn_amount)
             gap = abs(sk_amount - sumup_amount)
             gap_pct = compute_gap_pct(sk_amount, sumup_amount)
-            tx_code = txn.get('transaction_code', '')
             fee = payout_fees.get(tx_code, Decimal(0))
 
             status = (
@@ -152,9 +164,12 @@ def run_matching(payout: SumUpPayout, sumup_transactions: list[dict],
     unmatched_txns = [t for t in sumup_transactions if t.get('transaction_code') not in matched_sumup_ids]
 
     for txn in unmatched_txns:
-        sumup_amount = Decimal(str(txn.get('amount', 0)))
-        sumup_ts = parse_sumup_timestamp(txn.get('timestamp'))
+        # txn_amount = ursprünglicher Verkaufsbetrag (für Matching);
+        # sumup_amount = tatsächlich abgerechneter Betrag (für Buchung/Anzeige).
+        txn_amount = Decimal(str(txn.get('amount', 0)))
         tx_code = txn.get('transaction_code', '')
+        sumup_amount = payout_settled.get(tx_code, txn_amount)
+        sumup_ts = parse_sumup_timestamp(txn.get('timestamp'))
         fee = payout_fees.get(tx_code, Decimal(0))
         matched_sale = None
         tier = None
@@ -163,7 +178,7 @@ def run_matching(payout: SumUpPayout, sumup_transactions: list[dict],
             if sale.id in matched_sale_ids:
                 continue
             sk_amount = Decimal(str(sale.total_amount_gross))
-            if abs(sk_amount - sumup_amount) > AMOUNT_TOLERANCE:
+            if abs(sk_amount - txn_amount) > AMOUNT_TOLERANCE:
                 continue
 
             # Tier 2: ±2 Minuten

@@ -18,7 +18,6 @@ from django.http import HttpResponse
 from django.template.loader import get_template
 from django.conf import settings
 from xhtml2pdf import pisa
-from decimal import Decimal
 
 
 def render_reconciliation_pdf(template_src, context_dict):
@@ -53,28 +52,17 @@ def generate_voucher_pdf(payout):
     """Generiert den Buchungsbeleg als PDF-Response."""
     items = payout.items.all().order_by('sumup_timestamp', 'sk_timestamp')
 
-    laden_total = sum(
-        i.sk_amount or i.sumup_amount or Decimal(0)
-        for i in items
-        if i.channel == 'LADEN' and i.match_status == 'MATCHED'
+    summary = payout.booking_summary
+    discrepancy_count = (
+        summary['gap_count'] + summary['only_sumup_count'] + summary['only_sk_count']
     )
-    cafe_total = sum(
-        i.sk_amount or i.sumup_amount or Decimal(0)
-        for i in items
-        if i.channel == 'CAFE' and i.match_status == 'MATCHED'
-    )
-    total_fees = sum(i.sumup_fee or Decimal(0) for i in items if i.sumup_fee)
-    net_amount = laden_total + cafe_total - total_fees
 
     context = {
         'payout': payout,
         'items': items,
-        'laden_total': laden_total,
-        'cafe_total': cafe_total,
-        'total_fees': total_fees,
-        'net_amount': net_amount,
-        'matched_count': sum(1 for i in items if i.match_status == 'MATCHED'),
-        'discrepancy_count': sum(1 for i in items if i.match_status != 'MATCHED'),
+        'net_amount': summary['computed_net'],
+        'discrepancy_count': discrepancy_count,
     }
+    context.update(summary)
 
     return render_reconciliation_pdf('reconciliation/voucher_pdf.html', context)

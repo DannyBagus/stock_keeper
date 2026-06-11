@@ -159,10 +159,52 @@
         <td class="text-right">CHF {{ total_fees }}</td>
     </tr>
     <tr class="total-row">
-        <td>Nettobetrag (= Bankgutschrift)</td>
+        <td>Berechnetes Nettototal</td>
         <td class="text-right">CHF {{ net_amount }}</td>
     </tr>
+    <tr>
+        <td>Effektive Bankgutschrift</td>
+        <td class="text-right">CHF {{ payout.bank_credit_amount }}</td>
+    </tr>
+    <tr>
+        <td class="text-bold">Differenz (soll 0.00 sein)</td>
+        <td class="text-right text-bold {% if is_balanced %}badge-ok{% else %}badge-err{% endif %}">CHF {{ net_delta|default_if_none:"–" }}</td>
+    </tr>
 </table>
+
+{% if not is_balanced %}
+<div class="period-info" style="border-color:#dc3545; background-color:#fdecea;">
+    <strong class="badge-err">Achtung – Abgleich geht nicht vollständig auf.</strong><br>
+    {% if refund_lines %}
+    Folgende Zeilen weichen ab (mutmasslich SumUp-Teilrückerstattung, die in Stock Keeper fehlt):
+    <table style="margin-top:6px;">
+        <thead>
+            <tr>
+                <th>SK Sale</th>
+                <th>Txn-Code</th>
+                <th class="text-right">SK gebucht</th>
+                <th class="text-right">SumUp abgerechnet</th>
+                <th class="text-right">Differenz</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for i in refund_lines %}
+            <tr>
+                <td>{% if i.sale %}#{{ i.sale.pk }}{% else %}–{% endif %}</td>
+                <td>{{ i.sumup_tx_code }}</td>
+                <td class="text-right">{{ i.sk_amount }}</td>
+                <td class="text-right">{{ i.sumup_amount }}</td>
+                <td class="text-right">{{ i.refund_diff }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+    {% if only_sumup_count or only_sk_count %}
+    Zusätzlich offen: {{ only_sumup_count }} × nur SumUp, {{ only_sk_count }} × nur SK.
+    {% endif %}
+</div>
+{% endif %}
 
 <!-- Gebühren-Aufstellung -->
 <h2>Gebührenaufstellung</h2>

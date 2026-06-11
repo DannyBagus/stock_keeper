@@ -20,6 +20,45 @@
     </div>
     {% endif %}
 
+    <!-- Schlusssummen-Prüfung: Total vs. Bankgutschrift -->
+    {% if is_balanced %}
+    <div class="alert alert-success">
+        <i class="fas fa-check-circle mr-2"></i>
+        Abgleich geht auf: berechnetes Total <strong>CHF {{ computed_net }}</strong>
+        = Bankgutschrift <strong>CHF {{ payout.bank_credit_amount }}</strong>.
+    </div>
+    {% else %}
+    <div class="alert alert-danger">
+        <h5 class="mb-2"><i class="fas fa-exclamation-triangle mr-2"></i> Abgleich geht nicht auf — bitte vor Abschluss prüfen</h5>
+        {% if net_delta is not None %}
+        <div>
+            Berechnetes Total (Laden + Café − Gebühren): <strong>CHF {{ computed_net }}</strong>
+            &nbsp;·&nbsp; Bankgutschrift: <strong>CHF {{ payout.bank_credit_amount }}</strong>
+            &nbsp;·&nbsp; Differenz: <strong>CHF {{ net_delta }}</strong>
+        </div>
+        {% endif %}
+        {% if refund_lines %}
+        <hr class="my-2">
+        <strong>Teilrückerstattungen / abweichende Beträge ({{ refund_lines|length }}, total CHF {{ refund_total }}):</strong>
+        <ul class="mb-0">
+            {% for i in refund_lines %}
+            <li>
+                {% if i.sale %}Sale <a href="/admin/commerce/sale/{{ i.sale.pk }}/change/" target="_blank">#{{ i.sale.pk }}</a>{% else %}(ohne SK-Sale){% endif %}
+                <code>{{ i.sumup_tx_code }}</code>:
+                SK gebucht <strong>CHF {{ i.sk_amount }}</strong>,
+                SumUp abgerechnet <strong>CHF {{ i.sumup_amount }}</strong>.
+                Mutmasslich SumUp-Teilrückerstattung, die in Stock Keeper noch fehlt — dort ggf. korrigieren/rückerstatten.
+            </li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+        {% if only_sumup_count or only_sk_count %}
+        <hr class="my-2">
+        <div>Zusätzlich offen: {{ only_sumup_count }} × nur SumUp, {{ only_sk_count }} × nur SK (siehe Tabelle).</div>
+        {% endif %}
+    </div>
+    {% endif %}
+
     <!-- Header -->
     <div class="card card-primary card-outline mb-3">
         <div class="card-header">

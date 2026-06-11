@@ -88,6 +88,14 @@ def _process_payout(request, form):
             p['transaction_code']: Decimal(str(p.get('fee', 0)))
             for p in sumup_payouts
         }
+        # Tatsächlich abgerechneter Bruttobetrag pro Transaktion (Netto + Gebühr).
+        # Weicht von txn.amount ab, wenn eine Teilrückerstattung abgezogen wurde.
+        payout_settled = {
+            p['transaction_code']: (
+                Decimal(str(p.get('amount', 0))) + Decimal(str(p.get('fee', 0)))
+            )
+            for p in sumup_payouts
+        }
 
         # Transaktionen laden und Periode ermitteln
         transactions, period_start, period_end = client.get_payout_transactions(sumup_payouts)
@@ -100,7 +108,11 @@ def _process_payout(request, form):
             return redirect('reconciliation:review', pk=payout.pk)
 
         # Matching durchführen
-        items = run_matching(payout, transactions, payout_fees=payout_fees)
+        items = run_matching(
+            payout, transactions,
+            payout_fees=payout_fees,
+            payout_settled=payout_settled,
+        )
         ReconciliationItem.objects.bulk_create(items)
 
         payout.status = SumUpPayout.Status.IN_REVIEW
@@ -124,37 +136,15 @@ def reconciliation_review(request, pk):
     payout = get_object_or_404(SumUpPayout, pk=pk)
     items = payout.items.select_related('sale__created_by').all()
 
-    # Zusammenfassung berechnen
-    matched_items = [i for i in items if i.match_status == 'MATCHED']
-    only_sumup = [i for i in items if i.match_status == 'ONLY_SUMUP']
-    only_sk = [i for i in items if i.match_status == 'ONLY_SK']
-    gap_items = [i for i in items if i.match_status == 'GAP']
-
-    total_matched = sum(i.sumup_amount or Decimal(0) for i in matched_items)
-    total_fees = sum(i.sumup_fee or Decimal(0) for i in items if i.sumup_fee)
-    laden_total = sum(
-        i.sk_amount or i.sumup_amount or Decimal(0)
-        for i in matched_items if i.channel == 'LADEN'
-    )
-    cafe_total = sum(
-        i.sk_amount or i.sumup_amount or Decimal(0)
-        for i in matched_items if i.channel == 'CAFE'
-    )
+    summary = payout.booking_summary
 
     context = admin.site.each_context(request)
     context.update({
         'title': f'Abgleich: {payout}',
         'payout': payout,
         'items': items,
-        'matched_count': len(matched_items),
-        'only_sumup_count': len(only_sumup),
-        'only_sk_count': len(only_sk),
-        'gap_count': len(gap_items),
-        'total_matched': total_matched,
-        'total_fees': total_fees,
-        'laden_total': laden_total,
-        'cafe_total': cafe_total,
     })
+    context.update(summary)
     return render(request, 'reconciliation/review.html', context)
 
 

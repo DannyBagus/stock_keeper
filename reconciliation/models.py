@@ -1,6 +1,11 @@
+from decimal import Decimal
+
 from django.db import models
 from django.conf import settings
 from commerce.models import Sale
+
+# Toleranz für die Schlusssummen-Prüfung (Bankgutschrift vs. abgerechnetem Total)
+BALANCE_TOLERANCE = Decimal('0.05')
 
 
 class SumUpPayout(models.Model):
@@ -63,6 +68,78 @@ class SumUpPayout(models.Model):
         if self.sumup_net_amount:
             return self.bank_credit_amount - self.sumup_net_amount
         return None
+
+    @property
+    def booking_summary(self):
+        """
+        Zentrale Aggregation für Review-Screen und PDF-Buchungsbeleg.
+
+        Bucht die Erlöse auf Basis des *tatsächlich von SumUp abgerechneten*
+        Betrags (sumup_amount = Payout-Netto + Gebühr). So fliessen z. B.
+        SumUp-Teilrückerstattungen korrekt in die Summen ein und das
+        Netto-Total stimmt mit der Bankgutschrift überein.
+
+        net_delta = (Laden + Café + Unbekannt − Gebühren) − Bankgutschrift.
+        Ein Wert ≠ 0 bedeutet: der Abgleich geht nicht auf (z. B. nicht
+        erfasste SumUp-Transaktion). refund_lines listet Zeilen, bei denen der
+        in SK gebuchte Betrag vom abgerechneten SumUp-Betrag abweicht
+        (typischerweise eine Teilrückerstattung, die in SK fehlt).
+        """
+        items = list(self.items.all())
+
+        def booked_amount(i):
+            # Was SumUp tatsächlich abgerechnet hat; Fallback auf SK-Betrag.
+            if i.sumup_amount is not None:
+                return i.sumup_amount
+            return i.sk_amount or Decimal('0')
+
+        booked = [i for i in items if i.match_status in ('MATCHED', 'GAP')]
+        laden = sum((booked_amount(i) for i in booked if i.channel == 'LADEN'), Decimal('0'))
+        cafe = sum((booked_amount(i) for i in booked if i.channel == 'CAFE'), Decimal('0'))
+        unknown = sum((booked_amount(i) for i in booked if i.channel == 'UNKNOWN'), Decimal('0'))
+        fees = sum((i.sumup_fee for i in items if i.sumup_fee), Decimal('0'))
+
+        computed_net = laden + cafe + unknown - fees
+        net_delta = None
+        if self.bank_credit_amount is not None:
+            net_delta = computed_net - self.bank_credit_amount
+
+        refund_lines = [
+            i for i in items
+            if i.sk_amount is not None and i.sumup_amount is not None
+            and abs(i.sk_amount - i.sumup_amount) > Decimal('0.01')
+        ]
+        for i in refund_lines:
+            # Transientes Feld für die Anzeige (SK gebucht − SumUp abgerechnet)
+            i.refund_diff = i.sk_amount - i.sumup_amount
+        refund_total = sum((i.refund_diff for i in refund_lines), Decimal('0'))
+
+        matched = [i for i in items if i.match_status == 'MATCHED']
+        gap = [i for i in items if i.match_status == 'GAP']
+        only_sumup = [i for i in items if i.match_status == 'ONLY_SUMUP']
+        only_sk = [i for i in items if i.match_status == 'ONLY_SK']
+
+        is_balanced = (
+            net_delta is not None and abs(net_delta) <= BALANCE_TOLERANCE
+            and not refund_lines and not gap and not only_sumup and not only_sk
+        )
+
+        return {
+            'laden_total': laden,
+            'cafe_total': cafe,
+            'unknown_total': unknown,
+            'total_fees': fees,
+            'computed_net': computed_net,
+            'net_delta': net_delta,
+            'refund_lines': refund_lines,
+            'refund_total': refund_total,
+            'matched_count': len(matched),
+            'gap_count': len(gap),
+            'only_sumup_count': len(only_sumup),
+            'only_sk_count': len(only_sk),
+            'total_matched': sum((i.sumup_amount or Decimal('0') for i in matched), Decimal('0')),
+            'is_balanced': is_balanced,
+        }
 
 
 class ReconciliationItem(models.Model):
