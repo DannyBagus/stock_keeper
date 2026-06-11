@@ -27,53 +27,48 @@
         Abgleich geht auf: berechnetes Nettototal <strong>CHF {{ computed_net }}</strong>
         = Bankgutschrift <strong>CHF {{ payout.bank_credit_amount }}</strong>.
     </div>
-    {% else %}
-    <div class="alert {% if net_matches %}alert-warning{% else %}alert-danger{% endif %}">
-        {% if net_matches %}
-        <h5 class="mb-2"><i class="fas fa-info-circle mr-2"></i> Nettototal stimmt — aber es gibt offene Positionen für Stock Keeper</h5>
-        <div>
-            Berechnetes Nettototal <strong>CHF {{ computed_net }}</strong>
-            = Bankgutschrift <strong>CHF {{ payout.bank_credit_amount }}</strong> (Differenz CHF {{ net_delta }}).
-            Die Auszahlung selbst ist vollständig erklärt; die folgenden Punkte betreffen die
-            <strong>Buchung in Stock Keeper</strong>, nicht die Bankabstimmung.
-        </div>
-        {% else %}
+    {% elif not net_matches %}
+    <div class="alert alert-danger">
         <h5 class="mb-2"><i class="fas fa-exclamation-triangle mr-2"></i> Abgleich geht nicht auf — bitte vor Abschluss prüfen</h5>
         {% if net_delta is not None %}
         <div>
-            Berechnetes Nettototal (Laden + Café − Gebühren): <strong>CHF {{ computed_net }}</strong>
+            Berechnetes Nettototal (Laden + Café − Gebühren − Refund-Abzüge): <strong>CHF {{ computed_net }}</strong>
             &nbsp;·&nbsp; Bankgutschrift: <strong>CHF {{ payout.bank_credit_amount }}</strong>
             &nbsp;·&nbsp; <strong>Differenz: CHF {{ net_delta }}</strong>
         </div>
         {% endif %}
-        {% endif %}
-        {% if refund_lines %}
+        {% if only_sumup_count or only_sk_count %}
         <hr class="my-2">
-        <strong>Teilrückerstattungen / abweichende Beträge ({{ refund_lines|length }}, total CHF {{ refund_total }}):</strong>
+        <div>Offen: {{ only_sumup_count }} × nur SumUp, {{ only_sk_count }} × nur SK (siehe Tabelle).</div>
+        {% endif %}
+    </div>
+    {% else %}
+    {# Nettototal stimmt; nur informative Hinweise (Refund-Abzüge / offene Tabellen-Positionen) #}
+    <div class="alert alert-warning">
+        <h5 class="mb-2"><i class="fas fa-info-circle mr-2"></i> Nettototal stimmt mit der Bankgutschrift überein</h5>
+        <div>
+            Berechnetes Nettototal <strong>CHF {{ computed_net }}</strong>
+            = Bankgutschrift <strong>CHF {{ payout.bank_credit_amount }}</strong> (Differenz CHF {{ net_delta }}).
+            Die Auszahlung ist vollständig erklärt — folgende Punkte dienen nur der Information.
+        </div>
+        {% if deduction_lines %}
+        <hr class="my-2">
+        <strong>Refund-Abzüge ({{ deduction_lines|length }}, total CHF {{ refund_deductions }}):</strong>
         <ul class="mb-2">
-            {% for i in refund_lines %}
+            {% for i in deduction_lines %}
             <li>
-                {% if i.sale %}Sale <a href="/admin/commerce/sale/{{ i.sale.pk }}/change/" target="_blank">#{{ i.sale.pk }}</a>{% else %}(ohne SK-Sale){% endif %}
-                <code>{{ i.sumup_tx_code }}</code>:
-                SK gebucht <strong>CHF {{ i.sk_amount }}</strong>,
-                SumUp abgerechnet <strong>CHF {{ i.sumup_amount }}</strong>
-                (SumUp-Teilrückerstattung CHF {{ i.refund_diff }}, in Stock Keeper noch nicht erfasst).
-                {% if i.sale and i.resolution == 'PENDING' %}
-                <button class="btn btn-xs btn-primary ml-1"
-                        @click="openRefundFix({{ i.pk }})"
-                        title="Verkauf in Stock Keeper an SumUp angleichen">
-                    <i class="fas fa-sync-alt"></i> An SumUp angleichen
-                </button>
-                {% elif i.resolution != 'PENDING' %}
-                <span class="badge badge-info">{{ i.get_resolution_display }}</span>
-                {% endif %}
+                Auf Auszahlungszeile <code>{{ i.sumup_tx_code }}</code>{% if i.sale %} (Sale <a href="/admin/commerce/sale/{{ i.sale.pk }}/change/" target="_blank">#{{ i.sale.pk }}</a>){% endif %}
+                wurde <strong>CHF {{ i.sumup_refund_deduction }}</strong> abgezogen.
+                Das ist die <strong>nicht erstattete Gebühr einer Rückerstattung</strong> (eine andere
+                Transaktion wurde rückerstattet) und zählt wie eine SumUp-Gebühr — keine Korrektur an
+                diesem Verkauf nötig.
             </li>
             {% endfor %}
         </ul>
         {% endif %}
         {% if only_sumup_count or only_sk_count %}
         <hr class="my-2">
-        <div>Zusätzlich offen: {{ only_sumup_count }} × nur SumUp, {{ only_sk_count }} × nur SK (siehe Tabelle).</div>
+        <div>Offen in der Tabelle: {{ only_sumup_count }} × nur SumUp, {{ only_sk_count }} × nur SK.</div>
         {% endif %}
     </div>
     {% endif %}
@@ -420,50 +415,6 @@
         </div>
     </div>
 
-    <!-- SumUp-Angleich Modal (Teilrückerstattung als Korrektur-Position buchen) -->
-    <div x-show="refundOpen" x-cloak
-         style="position:fixed;top:0;left:0;right:0;bottom:0;z-index:9999;align-items:center;justify-content:center;"
-         :style="refundOpen ? 'display:flex' : 'display:none'">
-        <div style="position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);"
-             @click="refundOpen=false"></div>
-        <div style="position:relative;background:#fff;border-radius:8px;max-width:540px;width:90%;box-shadow:0 10px 40px rgba(0,0,0,0.3);">
-            <div style="background:#007bff;color:#fff;padding:15px 20px;border-radius:8px 8px 0 0;">
-                <h5 style="margin:0;"><i class="fas fa-sync-alt mr-2"></i> Verkauf an SumUp angleichen</h5>
-            </div>
-            <div style="padding:20px;">
-                <p class="text-muted mb-2">Live-Abgleich mit SumUp für
-                    <strong>Sale #<span x-text="refundData.sale_id"></span></strong>
-                    (<code x-text="refundData.sumup_tx_code"></code>):</p>
-                <table class="table table-sm mb-2">
-                    <tr><td>In Stock Keeper gebucht</td><td class="text-right">CHF <span x-text="refundData.sk_gross"></span></td></tr>
-                    <tr><td>Von SumUp abgerechnet</td><td class="text-right">CHF <span x-text="refundData.settled"></span></td></tr>
-                    <tr class="font-weight-bold"><td>Teilrückerstattung (Korrektur)</td><td class="text-right text-danger">− CHF <span x-text="refundData.delta"></span></td></tr>
-                </table>
-                <p class="mb-2">
-                    Es wird eine negative Position
-                    <strong>„SumUp-Rückerstattung"</strong> über
-                    <strong>− CHF <span x-text="refundData.delta"></span></strong>
-                    (MwSt <span x-text="refundData.vat_rate"></span>%) auf den Verkauf gebucht.
-                    Der Brutto-Umsatz sinkt damit auf <strong>CHF <span x-text="refundData.settled"></span></strong>.
-                    <span class="text-muted">Lagerbestand und SumUp-Gebühr bleiben unverändert.</span>
-                </p>
-                <template x-if="refundData.mixed_rates">
-                    <div class="alert alert-warning py-2 px-3 mb-0">
-                        <i class="fas fa-exclamation-triangle mr-1"></i>
-                        Dieser Verkauf hat mehrere MwSt-Sätze. Die Korrektur wird zum
-                        dominanten Satz (<span x-text="refundData.vat_rate"></span>%) gebucht — bitte prüfen.
-                    </div>
-                </template>
-            </div>
-            <div style="padding:10px 20px 20px;display:flex;justify-content:flex-end;gap:10px;">
-                <button class="btn btn-secondary" @click="refundOpen=false" :disabled="refundBusy">Abbrechen</button>
-                <button class="btn btn-primary" :disabled="refundBusy" @click="applyRefundFix()">
-                    <i class="fas fa-check mr-1"></i> Ja, Buchung angleichen
-                </button>
-            </div>
-        </div>
-    </div>
-
     <!-- Complete Confirmation Modal -->
     <div id="complete-modal" style="display:none; position:fixed;top:0;left:0;right:0;bottom:0;z-index:9999;align-items:center;justify-content:center;">
         <div style="position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);"
@@ -537,40 +488,6 @@ function reconciliationReview() {
         pickerQuery: '',
         pickerResults: [],
         pickerBusy: false,
-        refundOpen: false,
-        refundBusy: false,
-        refundItemPk: null,
-        refundData: {},
-
-        openRefundFix(itemPk) {
-            this.refundItemPk = itemPk;
-            this.refundData = {};
-            const url = `{% url 'reconciliation:list' %}{{ payout.pk }}/item/${itemPk}/align-sale/`;
-            fetch(url)
-                .then(r => r.json().then(d => ({ ok: r.ok, data: d })))
-                .then(({ ok, data }) => {
-                    if (!ok) { alert('Fehler: ' + (data.error || 'unbekannt')); return; }
-                    if (data.already_done) { alert('Diese Zeile wurde bereits bearbeitet.'); return; }
-                    this.refundData = data;
-                    this.refundOpen = true;
-                })
-                .catch(err => alert('Fehler beim Live-Abgleich: ' + err));
-        },
-
-        applyRefundFix() {
-            if (this.refundBusy) return;
-            this.refundBusy = true;
-            const url = `{% url 'reconciliation:list' %}{{ payout.pk }}/item/${this.refundItemPk}/align-sale/`;
-            const csrf = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '{{ csrf_token }}';
-            fetch(url, { method: 'POST', headers: { 'X-CSRFToken': csrf } })
-                .then(r => r.json().then(d => ({ ok: r.ok, data: d })))
-                .then(({ ok, data }) => {
-                    this.refundBusy = false;
-                    if (!ok) { alert('Fehler: ' + (data.error || 'unbekannt')); return; }
-                    window.location.reload();
-                })
-                .catch(err => { this.refundBusy = false; alert('Fehler: ' + err); });
-        },
 
         createDiversesSale(itemPk, amount) {
             if (!confirm('Sale "Diverses" über CHF ' + amount + ' nachbuchen?')) return;

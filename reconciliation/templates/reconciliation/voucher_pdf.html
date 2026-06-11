@@ -128,6 +128,14 @@
             <td class="text-right">{{ total_fees }}</td>
         </tr>
         {% endif %}
+        {% if refund_deductions %}
+        <tr class="buchung-row">
+            <td>6800 SumUp-Gebühren</td>
+            <td>1020 Bank</td>
+            <td>Refund-Abzug (nicht erstattete Gebühr) {{ payout.period_start|date:"m/Y" }}</td>
+            <td class="text-right">{{ refund_deductions }}</td>
+        </tr>
+        {% endif %}
     </tbody>
 </table>
 
@@ -143,21 +151,23 @@
         <td class="text-right {% if discrepancy_count > 0 %}badge-err{% else %}badge-ok{% endif %}">{{ discrepancy_count }}</td>
     </tr>
     <tr>
-        <td>Bruttoumsatz (Laden + Café)</td>
-        <td class="text-right text-bold">CHF {{ payout.sumup_gross_amount|default_if_none:"–" }}</td>
-    </tr>
-    <tr>
-        <td>Laden (Supportelle)</td>
+        <td>Umsatz Laden (Supportelle)</td>
         <td class="text-right">CHF {{ laden_total }}</td>
     </tr>
     <tr>
-        <td>Café</td>
+        <td>Umsatz Café</td>
         <td class="text-right">CHF {{ cafe_total }}</td>
     </tr>
     <tr>
         <td>Abzüglich SumUp-Gebühren</td>
         <td class="text-right">CHF {{ total_fees }}</td>
     </tr>
+    {% if refund_deductions %}
+    <tr>
+        <td>Abzüglich Refund-Abzüge (nicht erstattete Gebühr)</td>
+        <td class="text-right">CHF {{ refund_deductions }}</td>
+    </tr>
+    {% endif %}
     <tr class="total-row">
         <td>Berechnetes Nettototal</td>
         <td class="text-right">CHF {{ net_amount }}</td>
@@ -172,37 +182,39 @@
     </tr>
 </table>
 
-{% if not is_balanced %}
+{% if not net_matches %}
 <div class="period-info" style="border-color:#dc3545; background-color:#fdecea;">
-    <strong class="badge-err">Achtung – Abgleich geht nicht vollständig auf.</strong><br>
-    {% if refund_lines %}
-    Folgende Zeilen weichen ab (mutmasslich SumUp-Teilrückerstattung, die in Stock Keeper fehlt):
+    <strong class="badge-err">Achtung – Abgleich geht nicht auf.</strong>
+    Berechnetes Nettototal CHF {{ net_amount }} weicht von der Bankgutschrift
+    CHF {{ payout.bank_credit_amount }} ab (Differenz CHF {{ net_delta|default_if_none:"–" }}).
+    {% if only_sumup_count or only_sk_count %}
+    Offen: {{ only_sumup_count }} × nur SumUp, {{ only_sk_count }} × nur SK.
+    {% endif %}
+</div>
+{% elif deduction_lines %}
+<div class="period-info">
+    <strong>Hinweis – Refund-Abzüge enthalten.</strong>
+    Bei {{ deduction_lines|length }} Transaktion(en) hat SumUp zusätzlich zur Gebühr die
+    nicht erstattete Bearbeitungsgebühr einer Rückerstattung abgezogen (total CHF {{ refund_deductions }}).
+    Diese zählt wie eine Gebühr; der jeweilige Verkauf bleibt unverändert.
     <table style="margin-top:6px;">
         <thead>
             <tr>
-                <th>SK Sale</th>
+                <th>Auszahlungszeile</th>
                 <th>Txn-Code</th>
-                <th class="text-right">SK gebucht</th>
-                <th class="text-right">SumUp abgerechnet</th>
-                <th class="text-right">Differenz</th>
+                <th class="text-right">Refund-Abzug</th>
             </tr>
         </thead>
         <tbody>
-            {% for i in refund_lines %}
+            {% for i in deduction_lines %}
             <tr>
-                <td>{% if i.sale %}#{{ i.sale.pk }}{% else %}–{% endif %}</td>
+                <td>{% if i.sale %}Sale #{{ i.sale.pk }}{% else %}–{% endif %}</td>
                 <td>{{ i.sumup_tx_code }}</td>
-                <td class="text-right">{{ i.sk_amount }}</td>
-                <td class="text-right">{{ i.sumup_amount }}</td>
-                <td class="text-right">{{ i.refund_diff }}</td>
+                <td class="text-right">{{ i.sumup_refund_deduction }}</td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
-    {% endif %}
-    {% if only_sumup_count or only_sk_count %}
-    Zusätzlich offen: {{ only_sumup_count }} × nur SumUp, {{ only_sk_count }} × nur SK.
-    {% endif %}
 </div>
 {% endif %}
 

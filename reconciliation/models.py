@@ -74,21 +74,24 @@ class SumUpPayout(models.Model):
         """
         Zentrale Aggregation für Review-Screen und PDF-Buchungsbeleg.
 
-        Bucht die Erlöse auf Basis des *tatsächlich von SumUp abgerechneten*
-        Betrags (sumup_amount = Payout-Netto + Gebühr). So fliessen z. B.
-        SumUp-Teilrückerstattungen korrekt in die Summen ein und das
-        Netto-Total stimmt mit der Bankgutschrift überein.
+        Erlöse werden mit dem *vollen* Transaktionsbetrag gebucht (sumup_amount).
+        Der von SumUp tatsächlich ausbezahlte Betrag ergibt sich aus:
 
-        net_delta = (Laden + Café + Unbekannt − Gebühren) − Bankgutschrift.
-        Ein Wert ≠ 0 bedeutet: der Abgleich geht nicht auf (z. B. nicht
-        erfasste SumUp-Transaktion). refund_lines listet Zeilen, bei denen der
-        in SK gebuchte Betrag vom abgerechneten SumUp-Betrag abweicht
-        (typischerweise eine Teilrückerstattung, die in SK fehlt).
+            Bankgutschrift = Σ Brutto − Σ eigene Gebühren − Σ Refund-Abzüge
+
+        Refund-Abzüge (sumup_refund_deduction) entstehen, wenn SumUp bei einer
+        Rückerstattung die nicht erstattete Bearbeitungsgebühr von der
+        Auszahlungszeile einer (anderen) Transaktion abzieht. Sie sind faktisch
+        eine zusätzliche Gebühr und werden separat ausgewiesen.
+
+        net_delta = (Laden + Café + Unbekannt − Gebühren − Refund-Abzüge) − Bankgutschrift.
+        Ein Wert ≠ 0 bedeutet: der Abgleich geht nicht auf (z. B. nicht erfasste
+        SumUp-Transaktion).
         """
         items = list(self.items.all())
 
         def booked_amount(i):
-            # Was SumUp tatsächlich abgerechnet hat; Fallback auf SK-Betrag.
+            # Voller Transaktions-Bruttobetrag; Fallback auf SK-Betrag.
             if i.sumup_amount is not None:
                 return i.sumup_amount
             return i.sk_amount or Decimal('0')
@@ -98,21 +101,19 @@ class SumUpPayout(models.Model):
         cafe = sum((booked_amount(i) for i in booked if i.channel == 'CAFE'), Decimal('0'))
         unknown = sum((booked_amount(i) for i in booked if i.channel == 'UNKNOWN'), Decimal('0'))
         fees = sum((i.sumup_fee for i in items if i.sumup_fee), Decimal('0'))
+        refund_deductions = sum(
+            (i.sumup_refund_deduction for i in items if i.sumup_refund_deduction), Decimal('0')
+        )
 
-        computed_net = laden + cafe + unknown - fees
+        computed_net = laden + cafe + unknown - fees - refund_deductions
         net_delta = None
         if self.bank_credit_amount is not None:
             net_delta = computed_net - self.bank_credit_amount
 
-        refund_lines = [
-            i for i in items
-            if i.sk_amount is not None and i.sumup_amount is not None
-            and abs(i.sk_amount - i.sumup_amount) > Decimal('0.01')
+        # Zeilen mit Refund-Abzug (nicht erstattete Gebühr einer Rückerstattung)
+        deduction_lines = [
+            i for i in items if i.sumup_refund_deduction and i.sumup_refund_deduction > Decimal('0')
         ]
-        for i in refund_lines:
-            # Transientes Feld für die Anzeige (SK gebucht − SumUp abgerechnet)
-            i.refund_diff = i.sk_amount - i.sumup_amount
-        refund_total = sum((i.refund_diff for i in refund_lines), Decimal('0'))
 
         matched = [i for i in items if i.match_status == 'MATCHED']
         gap = [i for i in items if i.match_status == 'GAP']
@@ -120,20 +121,21 @@ class SumUpPayout(models.Model):
         only_sk = [i for i in items if i.match_status == 'ONLY_SK']
 
         # net_matches: das Nettototal deckt sich mit der Bankgutschrift.
-        # is_balanced: zusätzlich keinerlei offene Positionen (vollständig sauber).
+        # is_balanced: zusätzlich keine offenen Positionen und kein Refund-Abzug.
         net_matches = net_delta is not None and abs(net_delta) <= BALANCE_TOLERANCE
-        has_open_items = bool(refund_lines or gap or only_sumup or only_sk)
-        is_balanced = net_matches and not has_open_items
+        has_open_items = bool(gap or only_sumup or only_sk)
+        has_notices = bool(deduction_lines)
+        is_balanced = net_matches and not has_open_items and not has_notices
 
         return {
             'laden_total': laden,
             'cafe_total': cafe,
             'unknown_total': unknown,
             'total_fees': fees,
+            'refund_deductions': refund_deductions,
+            'deduction_lines': deduction_lines,
             'computed_net': computed_net,
             'net_delta': net_delta,
-            'refund_lines': refund_lines,
-            'refund_total': refund_total,
             'matched_count': len(matched),
             'gap_count': len(gap),
             'only_sumup_count': len(only_sumup),
@@ -141,6 +143,7 @@ class SumUpPayout(models.Model):
             'total_matched': sum((i.sumup_amount or Decimal('0') for i in matched), Decimal('0')),
             'net_matches': net_matches,
             'has_open_items': has_open_items,
+            'has_notices': has_notices,
             'is_balanced': is_balanced,
         }
 
@@ -166,6 +169,11 @@ class ReconciliationItem(models.Model):
     )
     sumup_amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     sumup_fee = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    sumup_refund_deduction = models.DecimalField(
+        max_digits=10, decimal_places=2, default=0,
+        help_text="Refund-Abzug auf dieser Auszahlungszeile "
+                  "(nicht erstattete Gebühr einer Rückerstattung)"
+    )
     sumup_timestamp = models.DateTimeField(null=True, blank=True)
 
     # Matching-Ergebnis

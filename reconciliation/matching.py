@@ -14,10 +14,11 @@ daher funktioniert Tier 1 nicht für historische Daten. Matching läuft über Ti
 Gebühren: Die SumUp Transactions API liefert kein fee_amount pro Transaktion.
 Die Gebühren kommen aus dem Payout-Objekt (payout.fee) und werden separat zugeordnet.
 
-Abgerechneter Betrag: Das Feld txn.amount ist der *ursprüngliche* Verkaufsbetrag.
-Eine spätere (Teil-)Rückerstattung erscheint dort NICHT — sie wird nur im Payout
-vom Netto abgezogen. Deshalb wird als sumup_amount der tatsächlich abgerechnete
-Betrag (Payout-Netto + Gebühr) gespeichert; gematcht wird weiterhin über txn.amount.
+Refund-Abzug: Zieht SumUp bei einer Rückerstattung die nicht erstattete
+Bearbeitungsgebühr von der Auszahlungszeile einer (anderen) Transaktion ab, ist
+deren Payout-Netto kleiner als (Brutto − eigene Gebühr). Diese Differenz wird als
+sumup_refund_deduction gespeichert und faktisch wie eine zusätzliche Gebühr
+behandelt; sumup_amount bleibt der volle Transaktionsbetrag.
 """
 
 import logging
@@ -68,6 +69,20 @@ def parse_sumup_timestamp(ts_str: str) -> datetime | None:
         return datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
     except Exception:
         return None
+
+
+def _refund_deduction(txn_amount: Decimal, tx_code: str,
+                      payout_settled: dict[str, Decimal]) -> Decimal:
+    """
+    Refund-Abzug = Brutto − tatsächlich abgerechneter Betrag (Payout-Netto + Gebühr).
+    > 0, wenn SumUp zusätzlich zur eigenen Gebühr etwas von der Auszahlungszeile
+    abgezogen hat (nicht erstattete Gebühr einer Rückerstattung). Sonst 0.
+    """
+    settled = payout_settled.get(tx_code)
+    if settled is None:
+        return Decimal('0')
+    diff = txn_amount - settled
+    return diff if diff > Decimal('0') else Decimal('0')
 
 
 def compute_gap_pct(sk_amount: Decimal, sumup_amount: Decimal) -> Decimal:
@@ -124,9 +139,8 @@ def run_matching(payout: SumUpPayout, sumup_transactions: list[dict],
             sale = sale_by_id[foreign_id]
             sk_amount = Decimal(str(sale.total_amount_gross))
             tx_code = txn.get('transaction_code', '')
-            txn_amount = Decimal(str(txn.get('amount', 0)))
-            # Tatsächlich abgerechneter Betrag (inkl. evtl. Teilrückerstattung)
-            sumup_amount = payout_settled.get(tx_code, txn_amount)
+            sumup_amount = Decimal(str(txn.get('amount', 0)))
+            refund_deduction = _refund_deduction(sumup_amount, tx_code, payout_settled)
             gap = abs(sk_amount - sumup_amount)
             gap_pct = compute_gap_pct(sk_amount, sumup_amount)
             fee = payout_fees.get(tx_code, Decimal(0))
@@ -147,6 +161,7 @@ def run_matching(payout: SumUpPayout, sumup_transactions: list[dict],
                 sumup_foreign_tx_id=foreign_id,
                 sumup_amount=sumup_amount,
                 sumup_fee=fee,
+                sumup_refund_deduction=refund_deduction,
                 sumup_timestamp=parse_sumup_timestamp(txn.get('timestamp')),
                 match_tier=ReconciliationItem.MatchTier.EXACT,
                 match_status=status,
@@ -164,11 +179,9 @@ def run_matching(payout: SumUpPayout, sumup_transactions: list[dict],
     unmatched_txns = [t for t in sumup_transactions if t.get('transaction_code') not in matched_sumup_ids]
 
     for txn in unmatched_txns:
-        # txn_amount = ursprünglicher Verkaufsbetrag (für Matching);
-        # sumup_amount = tatsächlich abgerechneter Betrag (für Buchung/Anzeige).
-        txn_amount = Decimal(str(txn.get('amount', 0)))
         tx_code = txn.get('transaction_code', '')
-        sumup_amount = payout_settled.get(tx_code, txn_amount)
+        sumup_amount = Decimal(str(txn.get('amount', 0)))
+        refund_deduction = _refund_deduction(sumup_amount, tx_code, payout_settled)
         sumup_ts = parse_sumup_timestamp(txn.get('timestamp'))
         fee = payout_fees.get(tx_code, Decimal(0))
         matched_sale = None
@@ -178,7 +191,7 @@ def run_matching(payout: SumUpPayout, sumup_transactions: list[dict],
             if sale.id in matched_sale_ids:
                 continue
             sk_amount = Decimal(str(sale.total_amount_gross))
-            if abs(sk_amount - txn_amount) > AMOUNT_TOLERANCE:
+            if abs(sk_amount - sumup_amount) > AMOUNT_TOLERANCE:
                 continue
 
             # Tier 2: ±2 Minuten
@@ -215,6 +228,7 @@ def run_matching(payout: SumUpPayout, sumup_transactions: list[dict],
                 sumup_tx_code=tx_code,
                 sumup_amount=sumup_amount,
                 sumup_fee=fee,
+                sumup_refund_deduction=refund_deduction,
                 sumup_timestamp=sumup_ts,
                 match_tier=tier,
                 match_status=status,
@@ -234,6 +248,7 @@ def run_matching(payout: SumUpPayout, sumup_transactions: list[dict],
                 sumup_tx_code=tx_code,
                 sumup_amount=sumup_amount,
                 sumup_fee=fee,
+                sumup_refund_deduction=refund_deduction,
                 sumup_timestamp=sumup_ts,
                 match_tier=ReconciliationItem.MatchTier.NO_MATCH,
                 match_status=ReconciliationItem.MatchStatus.ONLY_SUMUP,
