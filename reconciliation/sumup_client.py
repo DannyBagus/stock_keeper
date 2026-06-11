@@ -97,11 +97,10 @@ class SumUpClient:
         logger.warning(f"Kein passendes Payout-Datum für CHF {amount} um {credit_date}")
         return []
 
-    def get_transactions_by_codes(self, transaction_codes: set[str],
-                                  period_start: date, period_end: date) -> list[dict]:
+    def get_transactions_in_window(self, period_start: date, period_end: date) -> list[dict]:
         """
-        Lädt Transaktionen für einen Zeitraum und filtert auf die angegebenen
-        transaction_codes. Paginiert bei Bedarf.
+        Lädt alle Transaktionen der Transaktionshistorie im Zeitraum (paginiert).
+        Enthält PAYMENT- wie REFUND-Einträge.
         """
         all_transactions = []
         params = {
@@ -132,7 +131,15 @@ class SumUpClient:
             except requests.RequestException:
                 break
 
-        # Filtern auf die relevanten transaction_codes
+        return all_transactions
+
+    def get_transactions_by_codes(self, transaction_codes: set[str],
+                                  period_start: date, period_end: date) -> list[dict]:
+        """
+        Lädt Transaktionen für einen Zeitraum und filtert auf die angegebenen
+        transaction_codes.
+        """
+        all_transactions = self.get_transactions_in_window(period_start, period_end)
         matched = [t for t in all_transactions if t.get('transaction_code') in transaction_codes]
         logger.info(
             f"SumUp: {len(all_transactions)} Transaktionen geladen, "
