@@ -275,6 +275,134 @@ def create_sale_for_item(request, pk, item_pk):
     })
 
 
+def _live_settled_for_item(item):
+    """
+    Holt live aus der SumUp-API den tatsächlich abgerechneten Betrag
+    (Payout-Netto + Gebühr) für die Transaktion dieses Items.
+    Gibt Decimal zurück oder None, wenn die Transaktion nicht gefunden wird.
+    """
+    if not item.sumup_tx_code:
+        return None
+    payout = item.payout
+    client = SumUpClient()
+    sumup_payouts = client.find_payouts_for_credit(
+        payout.bank_credit_amount, payout.bank_credit_date
+    )
+    for p in sumup_payouts:
+        if p.get('transaction_code') == item.sumup_tx_code:
+            return Decimal(str(p.get('amount', 0))) + Decimal(str(p.get('fee', 0)))
+    return None
+
+
+@staff_member_required
+def align_sale_to_sumup(request, pk, item_pk):
+    """
+    Gleicht einen Verkauf an den tatsächlich von SumUp abgerechneten Betrag an.
+
+    Eine SumUp-Teilrückerstattung reduziert nur das Payout-Netto, nicht den
+    ursprünglichen Verkaufsbetrag. Diese View bucht die Differenz als negative
+    Korrektur-Position (Produkt SKU "SUMUP-REFUND", lagerneutral) zum MwSt-Satz
+    des Verkaufs, sodass Umsatz und MwSt in Stock Keeper der Abrechnung entsprechen.
+
+    GET  → Live-Abgleich mit SumUp, liefert die aktuelle Differenz (ohne Änderung).
+    POST → bucht die Korrektur-Position und markiert die Zeile als erledigt.
+    """
+    payout = get_object_or_404(SumUpPayout, pk=pk)
+    item = get_object_or_404(ReconciliationItem, pk=item_pk, payout=payout)
+
+    if not item.sale_id:
+        return JsonResponse({'error': 'Zeile hat keinen verknüpften Verkauf.'}, status=400)
+
+    sale = item.sale
+
+    try:
+        settled = _live_settled_for_item(item)
+    except SumUpAPIError as e:
+        return JsonResponse({'error': f'SumUp API Fehler: {e}'}, status=502)
+
+    if settled is None:
+        return JsonResponse({'error': 'Transaktion in SumUp nicht gefunden.'}, status=404)
+
+    sk_gross = Decimal(str(sale.total_amount_gross))
+    delta = (sk_gross - settled).quantize(Decimal('0.01'))
+
+    sale_items = list(sale.items.all())
+    dominant_rate = Decimal('0.00')
+    if sale_items:
+        dominant_rate = (
+            max(sale_items, key=lambda it: it.total_price_gross).vat_rate or Decimal('0.00')
+        )
+    mixed_rates = len({(it.vat_rate or Decimal('0.00')) for it in sale_items}) > 1
+    already_done = item.resolution != ReconciliationItem.Resolution.PENDING
+
+    if request.method != 'POST':
+        return JsonResponse({
+            'sale_id': sale.id,
+            'sumup_tx_code': item.sumup_tx_code,
+            'sk_gross': str(sk_gross),
+            'settled': str(settled),
+            'delta': str(delta),
+            'vat_rate': str(dominant_rate),
+            'mixed_rates': mixed_rates,
+            'already_done': already_done,
+        })
+
+    # ── POST: Korrektur anwenden ──
+    if already_done:
+        return JsonResponse({'error': 'Diese Zeile wurde bereits bearbeitet.'}, status=400)
+    if delta <= Decimal('0.00'):
+        return JsonResponse({'error': 'Keine positive Differenz zu korrigieren.'}, status=400)
+
+    with transaction.atomic():
+        refund_product, _created = Product.objects.get_or_create(
+            sku='SUMUP-REFUND',
+            defaults={
+                'name': 'SumUp-Rückerstattung (Korrektur)',
+                'cost_price': Decimal('0.00'),
+                'sales_price': Decimal('0.00'),
+                'track_stock': False,
+                'is_active': True,
+            },
+        )
+        # Negative Korrektur-Position; lagerneutral (track_stock=False)
+        SaleItem.objects.create(
+            sale=sale,
+            product=refund_product,
+            quantity=1,
+            unit_price_gross=(-delta),
+            vat_rate=dominant_rate,
+        )
+        # Totale (Brutto + Netto) aus allen Positionen neu berechnen
+        total_gross = sum((it.total_price_gross for it in sale.items.all()), Decimal('0.00'))
+        total_net = Decimal('0.00')
+        for it in sale.items.all():
+            rate = it.vat_rate or Decimal('0.00')
+            total_net += it.total_price_gross / (Decimal('1.00') + rate / Decimal('100.00'))
+        sale.total_amount_gross = total_gross
+        sale.total_amount_net = total_net.quantize(Decimal('0.01'))
+        sale.save()
+
+        # Reconciliation-Zeile gilt jetzt als abgeglichen (SK == abgerechnet)
+        item.sk_amount = settled
+        item.gap_amount = Decimal('0.00')
+        item.gap_pct = Decimal('0.00')
+        item.resolution = ReconciliationItem.Resolution.MANUAL
+        item.resolution_note = (
+            f"SumUp-Teilrückerstattung CHF {delta} als Korrektur-Position gebucht "
+            f"(Verkauf #{sale.id}, MwSt {dominant_rate}%)."
+        )
+        item.resolved_at = timezone.now()
+        item.save()
+
+    return JsonResponse({
+        'status': 'ok',
+        'sale_id': sale.id,
+        'correction_amount': str(delta),
+        'new_gross': str(total_gross),
+        'vat_rate': str(dominant_rate),
+    })
+
+
 @staff_member_required
 def reconciliation_complete(request, pk):
     if request.method != 'POST':
