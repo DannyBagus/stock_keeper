@@ -151,7 +151,7 @@
         <!-- Category Chart -->
         <div class="col-md-4 mb-3">
             <div class="dashboard-card">
-                <h5 class="mb-3">Produkte nach Kategorie</h5>
+                <h5 class="mb-3">Umsatz nach Kategorie (CHF)</h5>
                 <!-- FIX: Canvas in Container gewickelt -->
                 <div class="chart-container">
                     <canvas id="catChart"></canvas>
@@ -269,17 +269,24 @@
         }
     });
 
-    // Category Chart
+    // Category Chart (Umsatz CHF nach Kategorie)
     const ctxCat = document.getElementById('catChart').getContext('2d');
+    const catLabels = {{ cat_labels_json|safe }};
+    const catData = {{ cat_data_json|safe }};
+    // Eindeutige Farben: gleichmässig verteilte Farbtöne (HSL) für beliebig viele Kategorien
+    const catColors = catLabels.map((_, i) =>
+        `hsl(${Math.round(360 * i / Math.max(catLabels.length, 1))}, 65%, 55%)`
+    );
+    const chfFmt = new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF' });
     new Chart(ctxCat, {
         type: 'doughnut',
         data: {
-            labels: {{ cat_labels_json|safe }},
+            labels: catLabels,
             datasets: [{
-                data: {{ cat_data_json|safe }},
-                backgroundColor: [
-                    '#4e73df', '#1cc88a', '#36b9cc', '#f6c23e', '#e74a3b', '#858796'
-                ],
+                data: catData,
+                backgroundColor: catColors,
+                borderColor: '#fff',
+                borderWidth: 1,
                 hoverOffset: 4
             }]
         },
@@ -287,7 +294,12 @@
             responsive: true,
             maintainAspectRatio: false, // Wichtig
             plugins: {
-                legend: { position: 'bottom' }
+                legend: { position: 'bottom' },
+                tooltip: {
+                    callbacks: {
+                        label: (c) => `${c.label}: ${chfFmt.format(c.parsed)}`
+                    }
+                }
             }
         }
     });

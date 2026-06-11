@@ -3,7 +3,7 @@ from django.contrib import admin
 from django.contrib.admin.views.decorators import staff_member_required
 from django.contrib import messages
 from django.db import transaction
-from django.db.models import Sum, Count, F, ExpressionWrapper, DecimalField, OuterRef, Subquery
+from django.db.models import Sum, F, ExpressionWrapper, DecimalField, OuterRef, Subquery
 from django.db.models.functions import TruncMonth, Coalesce
 from django.utils import timezone
 from django.utils.text import slugify
@@ -17,7 +17,7 @@ import csv
 import json
 from .models import Product, Category, StockMovement
 from .forms import InventoryReportForm
-from commerce.models import Sale, PurchaseOrder
+from commerce.models import Sale, SaleItem, PurchaseOrder
 from commerce.utils import render_to_pdf 
 
 @staff_member_required
@@ -58,10 +58,26 @@ def dashboard_view(request):
             months.append(entry['month'].strftime('%b %Y'))
             revenues.append(float(entry['total'] or 0))
 
-    # 2. Produkte nach Kategorie
-    cat_qs = Category.objects.annotate(p_count=Count('products')).filter(p_count__gt=0)
-    cat_labels = [c.name for c in cat_qs]
-    cat_data = [c.p_count for c in cat_qs]
+    # 2. Verkaufsumsatz CHF nach Produktkategorie (nur abgeschlossene Verkäufe)
+    revenue_expr = ExpressionWrapper(
+        F('quantity') * F('unit_price_gross'),
+        output_field=DecimalField(max_digits=14, decimal_places=2),
+    )
+    cat_rev_qs = (
+        SaleItem.objects
+        .filter(sale__status=Sale.Status.COMPLETED)
+        .values('product__category__name')
+        .annotate(revenue=Sum(revenue_expr))
+        .order_by('-revenue')
+    )
+    cat_labels = []
+    cat_data = []
+    for entry in cat_rev_qs:
+        rev = float(entry['revenue'] or 0)
+        if rev <= 0:
+            continue
+        cat_labels.append(entry['product__category__name'] or 'Ohne Kategorie')
+        cat_data.append(round(rev, 2))
 
     # 2b. Kassen-Verkäufe nach Wochentag & Uhrzeit (Heatmap)
     # Ziel: Öffnungszeiten optimieren -> wann finden POS-Verkäufe statt?
