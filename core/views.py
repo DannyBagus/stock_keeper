@@ -45,8 +45,11 @@ def dashboard_view(request):
     """
     Landing Page Dashboard mit KPIs und Charts.
     """
-    # 1. Verkaufserlös pro Monat
-    sales_qs = Sale.objects.annotate(month=TruncMonth('date'))\
+    # 1. Verkaufserlös pro Monat (nur abgeschlossene Verkäufe)
+    # Basis für Balken, Trendlinie und Lagemasse — konsistent mit dem
+    # Kategorie-Chart, das ebenfalls nur COMPLETED-Verkäufe auswertet.
+    sales_qs = Sale.objects.filter(status=Sale.Status.COMPLETED)\
+        .annotate(month=TruncMonth('date'))\
         .values('month')\
         .annotate(total=Sum('total_amount_gross'))\
         .order_by('month')
