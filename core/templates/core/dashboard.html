@@ -39,6 +39,37 @@
         width: 100%;
     }
 
+    /* Lagemasse-Leiste unter dem Umsatz-Chart */
+    .stat-strip {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 18px;
+        padding-top: 14px;
+        border-top: 1px solid #eee;
+    }
+    .stat-box {
+        flex: 1 1 0;
+        min-width: 90px;
+        text-align: center;
+        background: #f8f9fc;
+        border-radius: 6px;
+        padding: 8px 6px;
+    }
+    .stat-label {
+        color: #888;
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .stat-value {
+        font-size: 1.15rem;
+        font-weight: 700;
+        color: #333;
+        font-variant-numeric: tabular-nums;
+        margin-top: 2px;
+    }
+
     /* Verkaufs-Heatmap (Wochentag x Uhrzeit) */
     .heatmap-toggle .btn { font-size: 0.78rem; }
     .heatmap-wrap { overflow-x: auto; }
@@ -145,6 +176,25 @@
                 <div class="chart-container">
                     <canvas id="salesChart"></canvas>
                 </div>
+                <!-- Lagemasse über die monatlichen Brutto-Umsätze -->
+                <div class="stat-strip">
+                    <div class="stat-box">
+                        <div class="stat-label">Mittelwert</div>
+                        <div class="stat-value">{{ sales_stats.mean }}</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">Median</div>
+                        <div class="stat-value">{{ sales_stats.median }}</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">Modus</div>
+                        <div class="stat-value">{{ sales_stats.mode }}</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">Summe</div>
+                        <div class="stat-value">{{ sales_stats.sum }}</div>
+                    </div>
+                </div>
             </div>
         </div>
         
@@ -247,24 +297,47 @@
 <script>
     // Sales Chart
     const ctxSales = document.getElementById('salesChart').getContext('2d');
+    const salesChfFmt = new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF' });
     new Chart(ctxSales, {
         type: 'bar',
         data: {
             labels: {{ months_json|safe }},
-            datasets: [{
-                label: 'Umsatz (Brutto)',
-                data: {{ revenues_json|safe }},
-                backgroundColor: 'rgba(78, 115, 223, 0.6)',
-                borderColor: 'rgba(78, 115, 223, 1)',
-                borderWidth: 1,
-                borderRadius: 4
-            }]
+            datasets: [
+                {
+                    label: 'Umsatz (Brutto)',
+                    data: {{ revenues_json|safe }},
+                    backgroundColor: 'rgba(78, 115, 223, 0.6)',
+                    borderColor: 'rgba(78, 115, 223, 1)',
+                    borderWidth: 1,
+                    borderRadius: 4,
+                    order: 2
+                },
+                {
+                    type: 'line',
+                    label: 'Trend (gleitender Ø, 3 Monate)',
+                    data: {{ moving_avg_json|safe }},
+                    borderColor: 'rgba(231, 74, 59, 1)',
+                    backgroundColor: 'rgba(231, 74, 59, 1)',
+                    borderWidth: 2,
+                    pointRadius: 2,
+                    tension: 0.3,
+                    fill: false,
+                    order: 1
+                }
+            ]
         },
         options: {
             responsive: true,
             maintainAspectRatio: false, // Wichtig: Damit füllt es den Container
             scales: {
                 y: { beginAtZero: true }
+            },
+            plugins: {
+                tooltip: {
+                    callbacks: {
+                        label: (c) => `${c.dataset.label}: ${salesChfFmt.format(c.parsed.y)}`
+                    }
+                }
             }
         }
     });
