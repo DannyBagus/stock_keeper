@@ -114,6 +114,7 @@ class Sale(models.Model):
         SHOPIFY_PAYMENTS = 'SHOPIFY', 'Shopify Payments' # Für Online
         TWINT = 'TWINT', 'Twint'
         INVOICE = 'INVOICE', 'Rechnung'
+        PAYREXX = 'PAYREXX', 'Payrexx (Webshop online)'  # SupportElle-Webshop
 
     # Vertriebskanal (Wo wurde gekauft?)
     class SalesChannel(models.TextChoices):

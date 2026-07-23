@@ -4,6 +4,7 @@ from django.conf import settings
 from django.conf.urls.static import static
 from django.views.static import serve # WICHTIG: Importieren
 from core import views as core_views
+from commerce import webshop_api
 
 urlpatterns = [
     path('', core_views.dashboard_view, name='home'),
@@ -14,6 +15,12 @@ urlpatterns = [
     path('core/', include('core.urls')),
     path('commerce/', include('commerce.urls')), # NEU: Commerce URLs
     path('reconciliation/', include('reconciliation.urls')),
+
+    # --- SupportElle-Webshop-API (token-auth, root-Pfade wie in der SPEC) ---
+    path('api/webshop/products', webshop_api.products, name='webshop_products'),
+    path('api/webshop/stock', webshop_api.stock, name='webshop_stock'),
+    path('api/webshop/sales', webshop_api.sales, name='webshop_sales'),
+    path('api/webshop/invoices', webshop_api.invoices, name='webshop_invoices'),
 ]
 
 # --- MEDIEN DATEIEN IN PROD ---

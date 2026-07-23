@@ -141,6 +141,15 @@ MEDIA_ROOT = BASE_DIR / 'media'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 
+# --- SupportElle-Webshop-API (token-authentifiziert) ---
+# Der Webshop (Django, eigener Container im Netz daniel_default) synchronisiert
+# Produkte/Bestand und meldet bezahlte Bestellungen als SalesItem zurück, sowie
+# holt Rechnungs-PDFs (Swiss QR-Bill) ab. Auth via gemeinsamem Bearer-Token.
+WEBSHOP_API_TOKEN = os.environ.get('WEBSHOP_API_TOKEN', '')
+# Kategorien, die NIE an den Webshop exportiert werden (Café/Ladenlokal-Artikel).
+WEBSHOP_EXCLUDED_CATEGORIES = ['Cafe', 'Café', 'CAFE']
+
+
 # LOGIN REDIRECT (Wichtig!)
 LOGIN_URL = 'oidc_authentication_init'  # Default-Ziel für @login_required
 LOGIN_REDIRECT_URL = '/'                # Nach Login zum Custom Dashboard
