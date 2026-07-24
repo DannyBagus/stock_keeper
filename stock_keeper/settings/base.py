@@ -146,8 +146,8 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # Produkte/Bestand und meldet bezahlte Bestellungen als SalesItem zurück, sowie
 # holt Rechnungs-PDFs (Swiss QR-Bill) ab. Auth via gemeinsamem Bearer-Token.
 WEBSHOP_API_TOKEN = os.environ.get('WEBSHOP_API_TOKEN', '')
-# Kategorien, die NIE an den Webshop exportiert werden (Café/Ladenlokal-Artikel).
-WEBSHOP_EXCLUDED_CATEGORIES = ['Cafe', 'Café', 'CAFE']
+# Kategorien, die NIE an den Webshop exportiert werden (Café/Food/Ladenlokal-Artikel).
+WEBSHOP_EXCLUDED_CATEGORIES = ['Cafe', 'Café', 'CAFE', 'Tee', 'Kaffee', 'Snack', 'Getränke']
 
 
 # LOGIN REDIRECT (Wichtig!)

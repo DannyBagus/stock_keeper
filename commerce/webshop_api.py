@@ -46,8 +46,14 @@ logger = logging.getLogger(__name__)
 WEBSHOP_BOT_USERNAME = 'webshop_bot'
 
 
+def _norm(s):
+    """Normalize a category name for robust comparison (NFC + strip + casefold)."""
+    import unicodedata
+    return unicodedata.normalize('NFC', (s or '')).strip().casefold()
+
+
 def _excluded_categories():
-    return {c.casefold() for c in getattr(settings, 'WEBSHOP_EXCLUDED_CATEGORIES', [])}
+    return {_norm(c) for c in getattr(settings, 'WEBSHOP_EXCLUDED_CATEGORIES', [])}
 
 
 def webshop_token_required(view):
@@ -71,7 +77,7 @@ def _webshop_products_qs():
     qs = Product.objects.filter(is_active=True).select_related('category', 'supplier', 'vat')
     for p in qs:
         cat_name = p.category.name if p.category else ''
-        if cat_name.casefold() in excluded:
+        if _norm(cat_name) in excluded:
             continue
         yield p, cat_name
 
