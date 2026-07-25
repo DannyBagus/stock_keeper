@@ -1,5 +1,9 @@
+from urllib.parse import urlencode
+
 from django.contrib import admin
+from django.db.models import Q
 from django.utils.html import format_html
+from django.utils.safestring import mark_safe
 from django.urls import reverse
 from .models import Product, Category, Supplier, Vat, StockMovement
 
@@ -45,11 +49,28 @@ class StockMovementInline(admin.TabularInline):
     source_link.short_description = "Beleg / Ursprung"
 
 
-             
+
+class HasImageFilter(admin.SimpleListFilter):
+    """Arbeitsliste: Produkte mit / ohne hochgeladenes Bild filtern."""
+    title = "Bild vorhanden"
+    parameter_name = 'has_image'
+
+    def lookups(self, request, model_admin):
+        return (('no', 'Nein (Bild fehlt)'), ('yes', 'Ja'))
+
+    def queryset(self, request, queryset):
+        missing = Q(image='') | Q(image__isnull=True)
+        if self.value() == 'no':
+            return queryset.filter(missing)
+        if self.value() == 'yes':
+            return queryset.exclude(missing)
+        return queryset
+
+
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
-    list_display = ('display_name', 'sku', 'stock_quantity', 'track_stock', 'unit', 'sales_price', 'category', 'supplier')
-    list_filter = ('category', 'supplier', 'unit', 'is_active', 'track_stock')
+    list_display = ('display_name', 'sku', 'has_image', 'stock_quantity', 'track_stock', 'unit', 'sales_price', 'category', 'supplier')
+    list_filter = (HasImageFilter, 'category', 'supplier', 'unit', 'is_active', 'track_stock')
     search_fields = ('name', 'sku', 'ean', 'description')
     list_editable = ('sales_price',) 
     inlines = [StockMovementInline]
@@ -73,6 +94,59 @@ class ProductAdmin(admin.ModelAdmin):
     @admin.display(description='Produktbezeichnung', ordering='name')
     def display_name(self, obj):
         return str(obj)
+
+    @admin.display(description='Bild', boolean=True, ordering='image')
+    def has_image(self, obj):
+        return bool(obj.image)
+
+    def get_fieldsets(self, request, obj=None):
+        """Den Google-Suchbutton nur einblenden, wenn noch kein Bild hinterlegt ist."""
+        fieldsets = super().get_fieldsets(request, obj)
+        if obj is None or obj.image:
+            return fieldsets
+
+        return [
+            (
+                name,
+                {**opts, 'fields': tuple(opts['fields']) + ('image_search_links',)}
+                if 'image' in opts.get('fields', ()) else opts,
+            )
+            for name, opts in fieldsets
+        ]
+
+    def get_readonly_fields(self, request, obj=None):
+        return tuple(super().get_readonly_fields(request, obj)) + ('image_search_links',)
+
+    @admin.display(description='Bild suchen')
+    def image_search_links(self, obj):
+        """Absprung in die Google-Bildersuche mit den Produktdaten als Suchbegriff."""
+        if obj is None or obj.pk is None:
+            return "-"
+
+        terms = [
+            obj.supplier.name if obj.supplier else '',
+            obj.name,
+            obj.category.name if obj.category else '',
+        ]
+        query = " ".join(t.strip() for t in terms if t and t.strip())
+
+        buttons = [format_html(
+            '<a class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener" href="{}">'
+            '<i class="fas fa-search"></i> Bilder bei Google suchen</a>',
+            f"https://www.google.com/search?{urlencode({'q': query, 'tbm': 'isch'})}",
+        )]
+
+        if obj.ean:
+            buttons.append(format_html(
+                '<a class="btn btn-sm btn-outline-secondary ml-2" target="_blank" rel="noopener" href="{}">'
+                '<i class="fas fa-barcode"></i> Suche mit EAN</a>',
+                f"https://www.google.com/search?{urlencode({'q': f'{query} {obj.ean}'.strip(), 'tbm': 'isch'})}",
+            ))
+
+        return format_html(
+            '<div>{}<p class="help mt-2 mb-0">Suchbegriff: {}</p></div>',
+            mark_safe("".join(buttons)), query,
+        )
 
     # Diese Methode sorgt für das Pre-Filling via URL-Parameter
     def get_changeform_initial_data(self, request):
