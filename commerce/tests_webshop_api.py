@@ -60,6 +60,42 @@ class WebshopApiTests(TestCase):
         self.assertEqual(art['price'], '64.90')
         self.assertEqual(art['vat_rate'], '8.10')
 
+    def test_variant_group_drives_handle_and_clean_name(self):
+        # Two differently-named articles sharing a variant_group must export the
+        # SAME handle and the SAME clean name -> webshop groups them into one product.
+        self.p1.name = 'Schenkelstrumpf closed toe M black 17.02.01.05.1'
+        self.p1.variant_group = 'Schenkelstrümpfe geschlossene Zehen'
+        self.p1.save()
+        self.p2.name = 'Schenkelstrumpf closed toe L skin 17.02.01.05.1'
+        self.p2.variant_group = 'Schenkelstrümpfe geschlossene Zehen'
+        self.p2.save()
+        products = self.client.get('/api/webshop/products', **AUTH).json()['products']
+        rows = [p for p in products if p['sku'] in (self.p1.sku, self.p2.sku)]
+        self.assertEqual({r['handle'] for r in rows}, {'schenkelstrumpfe-geschlossene-zehen'})
+        self.assertEqual({r['name'] for r in rows}, {'Schenkelstrümpfe geschlossene Zehen'})
+
+    def test_empty_variant_group_keeps_legacy_handle_and_name(self):
+        # Regression: with no group set, handle/name are exactly as before.
+        art = next(p for p in self.client.get('/api/webshop/products', **AUTH).json()['products']
+                   if p['sku'] == self.p1.sku)
+        self.assertEqual(art['name'], 'Anita Still-BH Clara')
+        self.assertEqual(art['handle'], 'anita-still-bh-clara')
+
+    def test_category_pickup_only_and_notice_in_export(self):
+        self.cat_bh.pickup_only = True
+        self.cat_bh.store_notice = 'Bitte zuerst ausmessen lassen.'
+        self.cat_bh.save()
+        art = next(p for p in self.client.get('/api/webshop/products', **AUTH).json()['products']
+                   if p['sku'] == self.p1.sku)
+        self.assertTrue(art['category_pickup_only'])
+        self.assertEqual(art['category_store_notice'], 'Bitte zuerst ausmessen lassen.')
+
+    def test_category_flags_default_false_empty(self):
+        art = next(p for p in self.client.get('/api/webshop/products', **AUTH).json()['products']
+                   if p['sku'] == self.p1.sku)
+        self.assertFalse(art['category_pickup_only'])
+        self.assertEqual(art['category_store_notice'], '')
+
     # --- stock ---
     def test_stock_export(self):
         rows = self.client.get('/api/webshop/stock', **AUTH).json()['stock']

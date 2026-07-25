@@ -9,8 +9,11 @@ from .models import Product, Category, Supplier, Vat, StockMovement
 
 @admin.register(Category)
 class CategoryAdmin(admin.ModelAdmin):
-    list_display = ('name', 'sku_prefix')
+    list_display = ('name', 'sku_prefix', 'pickup_only')
+    list_editable = ('pickup_only',)
+    list_filter = ('pickup_only',)
     search_fields = ('name',)
+    fields = ('name', 'pickup_only', 'store_notice')
 
 @admin.register(Supplier)
 class SupplierAdmin(admin.ModelAdmin):
@@ -69,12 +72,13 @@ class HasImageFilter(admin.SimpleListFilter):
 
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
-    list_display = ('display_name', 'sku', 'has_image', 'stock_quantity', 'track_stock', 'unit', 'sales_price', 'category', 'supplier')
+    list_display = ('display_name', 'variant_group', 'sku', 'has_image', 'stock_quantity', 'track_stock', 'unit', 'sales_price', 'category', 'supplier')
     list_filter = (HasImageFilter, 'category', 'supplier', 'unit', 'is_active', 'track_stock')
-    search_fields = ('name', 'sku', 'ean', 'description')
-    list_editable = ('sales_price',) 
+    search_fields = ('name', 'variant_group', 'sku', 'ean', 'description')
+    list_editable = ('sales_price',)
     inlines = [StockMovementInline]
-    
+    actions = ('duplicate_as_variant',)
+
     fieldsets = (
         ('Basisdaten', {
             'fields': ('name', 'description', 'category', 'supplier', 'is_active', 'track_stock')
@@ -83,12 +87,54 @@ class ProductAdmin(admin.ModelAdmin):
             'fields': ('ean', 'sku')
         }),
         ('Eigenschaften', {
-            'fields': ('size', 'color', 'image')
+            'fields': ('size', 'color', 'variant_group', 'image')
         }),
         ('Lager & Preis', {
             'fields': ('stock_quantity', 'unit', 'cost_price', 'sales_price', 'vat')
         }),
     )
+
+    @admin.action(description="Als Variante duplizieren (gleiches Produkt, andere Grösse/Farbe)")
+    def duplicate_as_variant(self, request, queryset):
+        """Klont jede markierte Zeile als weitere Variante desselben Webshop-Produkts.
+
+        Kopiert Name/Bild/Preis/Kategorie usw. (meist identisch), setzt eine
+        gemeinsame `variant_group` (fällt auf den Namen zurück, falls leer) und
+        LEERT `sku`, `ean`, `size`, `color` — SKU/EAN werden beim Speichern neu
+        vergeben; Grösse/Farbe/EAN trägt der Operator anschliessend nach.
+        """
+        created = 0
+        for src in queryset:
+            group = src.variant_group or src.name
+            if src.variant_group != group:
+                src.variant_group = group
+                src.save(update_fields=['variant_group'])
+            clone = Product(
+                name=src.name,
+                description=src.description,
+                category=src.category,
+                supplier=src.supplier,
+                variant_group=group,
+                image=src.image.name if src.image else '',
+                cost_price=src.cost_price,
+                sales_price=src.sales_price,
+                vat=src.vat,
+                unit=src.unit,
+                track_stock=src.track_stock,
+                is_active=True,
+                stock_quantity=0,
+                size='',
+                color='',
+                ean='',   # -> generate_unique_ean() beim Speichern
+                sku='',   # -> automatische SKU beim Speichern
+            )
+            clone.save()
+            created += 1
+        self.message_user(
+            request,
+            f"{created} Varianten-Kopie(n) erstellt. Bitte Grösse/Farbe/EAN und "
+            f"Lagerbestand nachtragen.",
+        )
 
     # Diese Methode erzwingt die Nutzung Ihrer __str__ Formatierung
     @admin.display(description='Produktbezeichnung', ordering='name')

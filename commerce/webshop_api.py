@@ -88,10 +88,13 @@ def products(request):
     """Full catalog: flat articles the webshop groups into products+variants."""
     out = []
     for p, cat_name in _webshop_products_qs():
+        # Grouping key + clean product title: when `variant_group` is set, all its
+        # articles share one handle (→ one webshop product) and one clean name.
+        # Empty group ⇒ identical to before (handle/name from the article name).
         out.append({
             'sku': p.sku,
-            'name': p.name,
-            'handle': slugify(p.name),
+            'name': p.variant_group or p.name,
+            'handle': slugify(p.variant_group) or slugify(p.name),
             'category': cat_name,
             'vendor': p.supplier.name if p.supplier else '',
             'size': p.size or '',
@@ -102,6 +105,11 @@ def products(request):
             'description_html': p.description or '',
             'is_active': p.is_active,
             'track_stock': p.track_stock,
+            # Category-level webshop flags (denormalized so the webshop can apply
+            # them without a separate category export). Same for every article of
+            # the category → the webshop writes them onto its Category on sync.
+            'category_pickup_only': bool(p.category.pickup_only) if p.category else False,
+            'category_store_notice': (p.category.store_notice or '') if p.category else '',
             # MEDIA-relative path; webshop resolves via mounted media root or URL.
             'images': [p.image.name] if p.image else [],
         })

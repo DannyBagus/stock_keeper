@@ -10,10 +10,24 @@ import random
 
 class Category(models.Model):
     name = models.CharField(max_length=100)
-    
+
     # Prefix für die SKU Generierung (1-9...)
     sku_prefix = models.PositiveIntegerField(unique=True, editable=False, null=True)
-    
+
+    # Webshop: erzwingt "nur Abholung im Laden" für alle Produkte dieser Kategorie
+    # (z.B. Stützstrümpfe — vorherige Ausmessung nötig). Wird zu SupportElle synct.
+    pickup_only = models.BooleanField(
+        "Nur Abholung im Laden", default=False,
+        help_text="Für diese Kategorie im Webshop keinen Versand erlauben "
+                  "(z.B. wenn eine Ausmessung im Laden nötig ist).",
+    )
+    # Freitext-Kundenhinweis, der im Webshop bei Produkten dieser Kategorie
+    # angezeigt wird. Wird zu SupportElle synct.
+    store_notice = models.TextField(
+        "Webshop-Kundenhinweis", blank=True, default="",
+        help_text="Hinweis, der im Shop bei allen Produkten dieser Kategorie erscheint.",
+    )
+
     class Meta:
         verbose_name_plural = "Categories"
 
@@ -62,6 +76,16 @@ class Product(models.Model):
     # Eigenschaften
     size = models.CharField(max_length=50, blank=True)
     color = models.CharField(max_length=50, blank=True)
+
+    # Varianten-Gruppierung für den Webshop: Artikel mit gleichem `variant_group`
+    # bilden im Shop EIN Produkt (Auswahl per Grösse/Farbe). Leer = eigenständiges
+    # Produkt (Verhalten wie bisher). Der Wert dient zugleich als sauberer
+    # Produkt-/Gruppen-Anzeigename im Shop (z.B. "Schenkelstrümpfe offene Zehen").
+    variant_group = models.CharField(
+        "Varianten-Gruppe", max_length=140, blank=True, default="", db_index=True,
+        help_text="Artikel mit gleichem Wert werden im Shop zu einem Produkt "
+                  "zusammengefasst (leer = eigenständiges Produkt).",
+    )
     
     # Bestand & Preis
     stock_quantity = models.IntegerField(default=0)
