@@ -27,11 +27,17 @@ _SEPARATORS = re.compile(r"[\s,;/·]+")
 
 
 def _strip_token(text: str, token: str) -> str:
-    """Entfernt `token` case-insensitiv als ganzes Wort/Teilstring aus text."""
-    token = (token or "").strip()
-    if not token:
+    """Entfernt `token` case-insensitiv als ganzes Wort aus text.
+
+    Nur an Wortgrenzen — sonst löscht Grösse "S" jedes "s" ("Still" → "till").
+    Zwischen den Teilen eines Tokens sind Trenner beliebig, damit "75 B" auch
+    "75B" und "L Plus normal" auch "L Plus, normal" trifft.
+    """
+    parts = [re.escape(t) for t in _SEPARATORS.split((token or "").strip()) if t]
+    if not parts:
         return text
-    return re.sub(re.escape(token), " ", text, flags=re.IGNORECASE)
+    pattern = r"(?<!\w)" + r"[\s,;/·]*".join(parts) + r"(?!\w)"
+    return re.sub(pattern, " ", text, flags=re.IGNORECASE)
 
 
 def base_name(product: Product) -> str:

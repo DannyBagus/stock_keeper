@@ -85,3 +85,18 @@ class BaseNameTests(TestCase):
         self.assertNotIn("(", base)
         self.assertNotIn("17.02.01.09.1", base)
         self.assertIn("open toe", base.lower())
+
+    def test_single_letter_size_strips_whole_word_only(self):
+        # Regression: size "S"/"L"/"M" used to delete every s/l/m in the name
+        # ("Milk Still BH" → "Mi k Sti BH"), splitting groups per size.
+        self.assertEqual(base_name(self._p("Milk Still BH, schwarz, S", "S", "schwarz")), "Milk Still BH")
+        self.assertEqual(base_name(self._p("Milk Still BH, schwarz, L", "L", "schwarz")), "Milk Still BH")
+        self.assertEqual(base_name(self._p("Leonisa high waist", "S", "beige")), "Leonisa high waist")
+
+    def test_size_matches_across_separators(self):
+        # Name spells the size differently than the field ("75B" vs "75 B").
+        p = self._p("Miss Lovely Still BH Schale, 75B, black", "75 B", "black")
+        self.assertEqual(base_name(p), "Miss Lovely Still BH Schale")
+        p = self._p("Stützstrumpfhosen Style, Open toe, L Plus, normal, skin, 17.02.01.09.1",
+                    "L Plus normal", "Skin")
+        self.assertEqual(base_name(p), "Stützstrumpfhosen Style Open toe")
