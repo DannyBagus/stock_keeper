@@ -1,10 +1,12 @@
 from urllib.parse import urlencode
 
 from django.contrib import admin
+from django.contrib.admin.widgets import AdminTextInputWidget
 from django.db.models import Q
-from django.utils.html import format_html
+from django.utils.html import format_html, format_html_join
 from django.utils.safestring import mark_safe
 from django.urls import reverse
+from .grouping import derive_variant_group
 from .models import Product, Category, Supplier, Vat, StockMovement
 
 @admin.register(Category)
@@ -70,6 +72,18 @@ class HasImageFilter(admin.SimpleListFilter):
         return queryset
 
 
+class VariantGroupInput(AdminTextInputWidget):
+    """Textfeld mit Vorschlagsliste der bestehenden Varianten-Gruppen (<datalist>)."""
+
+    def render(self, name, value, attrs=None, renderer=None):
+        list_id = f"{name}-options"
+        html = super().render(name, value, {**(attrs or {}), 'list': list_id}, renderer)
+        groups = (Product.objects.exclude(variant_group='').order_by('variant_group')
+                  .values_list('variant_group', flat=True).distinct())
+        options = format_html_join('', '<option value="{}">', ((g,) for g in groups))
+        return format_html('{}<datalist id="{}">{}</datalist>', html, list_id, options)
+
+
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
     list_display = ('display_name', 'variant_group', 'sku', 'has_image', 'stock_quantity', 'track_stock', 'unit', 'sales_price', 'category', 'supplier')
@@ -94,18 +108,23 @@ class ProductAdmin(admin.ModelAdmin):
         }),
     )
 
+    def formfield_for_dbfield(self, db_field, request, **kwargs):
+        if db_field.name == 'variant_group':
+            kwargs['widget'] = VariantGroupInput()
+        return super().formfield_for_dbfield(db_field, request, **kwargs)
+
     @admin.action(description="Als Variante duplizieren (gleiches Produkt, andere Grösse/Farbe)")
     def duplicate_as_variant(self, request, queryset):
         """Klont jede markierte Zeile als weitere Variante desselben Webshop-Produkts.
 
         Kopiert Name/Bild/Preis/Kategorie usw. (meist identisch), setzt eine
-        gemeinsame `variant_group` (fällt auf den Namen zurück, falls leer) und
+        gemeinsame `variant_group` (wird abgeleitet, falls leer) und
         LEERT `sku`, `ean`, `size`, `color` — SKU/EAN werden beim Speichern neu
         vergeben; Grösse/Farbe/EAN trägt der Operator anschliessend nach.
         """
         created = 0
         for src in queryset:
-            group = src.variant_group or src.name
+            group = src.variant_group or derive_variant_group(src)
             if src.variant_group != group:
                 src.variant_group = group
                 src.save(update_fields=['variant_group'])

@@ -6,51 +6,19 @@ produkteigenen Werte `size` und `color`, angehängte Artikelnummern und
 Klammer-Zusätze entfernt; **Zehen-Art (open/closed toe, offene/geschlossene
 Zehen) bleibt erhalten**, da sie Teil der Produkt-Identität ist.
 
+Die Ableitung selbst lebt in `core.grouping` (auch von `Product.save()` genutzt).
+
 Ablauf:  python manage.py suggest_groups --output vorschlag.csv
          # Operator prüft/korrigiert die Spalte `proposed_group`
          python manage.py apply_groups --from vorschlag.csv
 """
 import csv
-import re
 import sys
 
 from django.core.management.base import BaseCommand
 
+from core.grouping import base_name
 from core.models import Product
-
-# Angehängte/enthaltene Artikelnummern wie "17.02.01.05.1".
-_ARTICLE_NR = re.compile(r"\b\d+(?:[.\-]\d+)+\b")
-# Klammer-Zusätze, meist Grösse/Farbe: "(S Plus normal, Skin)".
-_PARENS = re.compile(r"\([^)]*\)")
-# Mehrfache Trenner/Whitespace einsammeln.
-_SEPARATORS = re.compile(r"[\s,;/·]+")
-
-
-def _strip_token(text: str, token: str) -> str:
-    """Entfernt `token` case-insensitiv als ganzes Wort aus text.
-
-    Nur an Wortgrenzen — sonst löscht Grösse "S" jedes "s" ("Still" → "till").
-    Zwischen den Teilen eines Tokens sind Trenner beliebig, damit "75 B" auch
-    "75B" und "L Plus normal" auch "L Plus, normal" trifft.
-    """
-    parts = [re.escape(t) for t in _SEPARATORS.split((token or "").strip()) if t]
-    if not parts:
-        return text
-    pattern = r"(?<!\w)" + r"[\s,;/·]*".join(parts) + r"(?!\w)"
-    return re.sub(pattern, " ", text, flags=re.IGNORECASE)
-
-
-def base_name(product: Product) -> str:
-    """Leitet einen sauberen Gruppen-Namen aus dem Produktnamen ab."""
-    name = product.name or ""
-    name = _PARENS.sub(" ", name)
-    name = _ARTICLE_NR.sub(" ", name)
-    # Produkteigene Grösse/Farbe entfernen (datengetrieben, kein Rate-Vokabular).
-    name = _strip_token(name, product.size)
-    name = _strip_token(name, product.color)
-    # Übrig gebliebene Trenner glätten.
-    name = _SEPARATORS.sub(" ", name).strip(" ,;-·/")
-    return name or (product.name or "").strip()
 
 
 class Command(BaseCommand):

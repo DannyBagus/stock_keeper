@@ -8,6 +8,8 @@ from django.contrib.contenttypes.models import ContentType
 from django.db import transaction
 import random
 
+from core.grouping import derive_variant_group
+
 class Category(models.Model):
     name = models.CharField(max_length=100)
 
@@ -78,13 +80,15 @@ class Product(models.Model):
     color = models.CharField(max_length=50, blank=True)
 
     # Varianten-Gruppierung für den Webshop: Artikel mit gleichem `variant_group`
-    # bilden im Shop EIN Produkt (Auswahl per Grösse/Farbe). Leer = eigenständiges
-    # Produkt (Verhalten wie bisher). Der Wert dient zugleich als sauberer
-    # Produkt-/Gruppen-Anzeigename im Shop (z.B. "Schenkelstrümpfe offene Zehen").
+    # bilden im Shop EIN Produkt (Auswahl per Grösse/Farbe). Leer gelassen wird der
+    # Wert beim Speichern automatisch abgeleitet (core.grouping). Der Wert dient
+    # zugleich als sauberer Produkt-/Gruppen-Anzeigename im Shop.
     variant_group = models.CharField(
         "Varianten-Gruppe", max_length=140, blank=True, default="", db_index=True,
         help_text="Artikel mit gleichem Wert werden im Shop zu einem Produkt "
-                  "zusammengefasst (leer = eigenständiges Produkt).",
+                  "zusammengefasst. Leer lassen = wird beim Speichern automatisch "
+                  "aus dem Namen (ohne Grösse/Farbe) gesetzt bzw. einer bestehenden "
+                  "Gruppe zugeordnet.",
     )
     
     # Bestand & Preis
@@ -178,7 +182,12 @@ class Product(models.Model):
                     pass 
             
             self.sku = f"{prefix}{new_sequence:04d}"
-            
+
+        # 3. Varianten-Gruppe ableiten, falls leer (Webshop-Gruppierung)
+        update_fields = kwargs.get('update_fields')
+        if not self.variant_group and (update_fields is None or 'variant_group' in update_fields):
+            self.variant_group = derive_variant_group(self)
+
         super().save(*args, **kwargs)
 
     @transaction.atomic

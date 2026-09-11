@@ -6,7 +6,7 @@ from django.contrib.messages.storage.fallback import FallbackStorage
 from django.test import RequestFactory, TestCase
 
 from core.admin import ProductAdmin
-from core.management.commands.suggest_groups import base_name
+from core.grouping import base_name
 from core.models import Category, Product, Vat
 
 
@@ -100,3 +100,40 @@ class BaseNameTests(TestCase):
         p = self._p("Stützstrumpfhosen Style, Open toe, L Plus, normal, skin, 17.02.01.09.1",
                     "L Plus normal", "Skin")
         self.assertEqual(base_name(p), "Stützstrumpfhosen Style Open toe")
+
+
+class AutoVariantGroupTests(TestCase):
+    """Leere variant_group wird beim Speichern abgeleitet — Operator muss nichts setzen."""
+
+    def setUp(self):
+        self.cat = Category.objects.create(name="Still- BH's")
+        self.vat = Vat.objects.create(name="Normal", rate=Decimal("8.10"), is_default=True)
+
+    def _p(self, name, size="", color="", **kw):
+        return Product.objects.create(
+            name=name, size=size, color=color, category=self.cat,
+            sales_price=Decimal("1"), cost_price=Decimal("1"), vat=self.vat, **kw,
+        )
+
+    def test_new_article_gets_clean_group(self):
+        p = self._p("Milk Still BH, schwarz, S", "S", "schwarz")
+        self.assertEqual(p.variant_group, "Milk Still BH")
+
+    def test_new_size_joins_existing_group_spelling(self):
+        self._p("Zoé Still BH", "M", "Rot", variant_group="Zoé Still BH")
+        # Different spelling (no accent, extra attributes) → same shop handle.
+        p = self._p("Zoe Still BH, schwarz, XL", "XL", "schwarz")
+        self.assertEqual(p.variant_group, "Zoé Still BH")
+
+    def test_explicit_group_is_kept(self):
+        p = self._p("Milk, rot, L", "L", "Rot", variant_group="Milk Still BH")
+        self.assertEqual(p.variant_group, "Milk Still BH")
+
+    def test_partial_save_without_group_field_does_not_derive(self):
+        p = self._p("Milk Still BH, rot, M", "M", "rot")
+        Product.objects.filter(pk=p.pk).update(variant_group="")
+        p.refresh_from_db()
+        p.stock_quantity = 3
+        p.save(update_fields=["stock_quantity"])
+        p.refresh_from_db()
+        self.assertEqual(p.variant_group, "")

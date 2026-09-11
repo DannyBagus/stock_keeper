@@ -76,6 +76,8 @@ class WebshopApiTests(TestCase):
 
     def test_empty_variant_group_keeps_legacy_handle_and_name(self):
         # Regression: with no group set, handle/name are exactly as before.
+        # save() now derives a group, so emulate a legacy row via update().
+        Product.objects.filter(pk=self.p1.pk).update(variant_group='')
         art = next(p for p in self.client.get('/api/webshop/products', **AUTH).json()['products']
                    if p['sku'] == self.p1.sku)
         self.assertEqual(art['name'], 'Anita Still-BH Clara')
