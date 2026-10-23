@@ -2,6 +2,7 @@ version: '3.8'
 
 services:
   db:
+    stop_grace_period: 60s
     image: mysql:8.0
     container_name: stock_keeper_db
     restart: always
