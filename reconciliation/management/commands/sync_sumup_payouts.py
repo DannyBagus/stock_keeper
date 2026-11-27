@@ -23,7 +23,7 @@ from reconciliation.services import (
 )
 from reconciliation.sumup_client import SumUpAPIError, SumUpClient
 
-DEFAULT_RECIPIENTS = ['admin@mileja.ch']
+DEFAULT_RECIPIENTS = ['info@mileja.ch', 'admin@mileja.ch']
 BASE_URL = 'https://stock-keeper.mileja.ch'
 
 
