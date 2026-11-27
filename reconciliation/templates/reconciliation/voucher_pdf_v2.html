@@ -1,0 +1,203 @@
+{% load static %}
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SumUp Buchungsbeleg</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 2cm;
+            @frame footer {
+                -pdf-frame-content: footer-content;
+                bottom: 0cm;
+                margin-left: 2cm;
+                margin-right: 2cm;
+                height: 1cm;
+            }
+        }
+        body {
+            font-family: Helvetica, sans-serif;
+            font-size: 10pt;
+            color: #333;
+        }
+        .header-table { width: 100%; margin-bottom: 20px; border: none; }
+        .logo-cell { width: 50%; font-size: 20pt; font-weight: bold; color: #aa8684; vertical-align: top; }
+        .meta-cell { width: 50%; text-align: right; font-size: 9pt; color: #555; vertical-align: top; }
+
+        h1 { color: #aa8684; font-size: 16pt; margin-bottom: 5px; }
+        h2 { color: #333; font-size: 12pt; margin-top: 20px; border-bottom: 1px solid #aa8684; padding-bottom: 5px; }
+
+        .period-info {
+            font-size: 9pt;
+            color: #555;
+            margin-bottom: 20px;
+            border: 1px solid #eee;
+            padding: 10px;
+            background-color: #f9f9f9;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+            font-size: 9pt;
+        }
+
+        th {
+            border-bottom: 1px solid #aa8684;
+            text-align: left;
+            padding: 4px;
+            font-weight: bold;
+            color: #aa8684;
+        }
+
+        td {
+            border-bottom: 1px solid #eee;
+            padding: 4px;
+            vertical-align: top;
+        }
+
+        .text-right { text-align: right; }
+        .text-bold { font-weight: bold; }
+        .total-row td { border-top: 2px solid #aa8684; font-weight: bold; }
+        .buchung-row td { padding: 6px 4px; font-size: 10pt; }
+        .note { font-size: 8pt; color: #777; margin-top: 10px; }
+        .badge-ok { color: #28a745; }
+        .badge-warn { color: #ffc107; }
+        .badge-err { color: #dc3545; }
+    </style>
+</head>
+<body>
+
+<table class="header-table">
+    <tr>
+        <td class="logo-cell">SupportElle <span style="font-size: 10pt; color: #555;">by Mileja</span></td>
+        <td class="meta-cell">
+            <strong>SumUp Buchungsbeleg</strong><br>
+            Erstellt: {% now "d.m.Y" %}<br>
+            Referenz: {{ payout.sumup_reference }}
+        </td>
+    </tr>
+</table>
+
+<h1>Buchungsbeleg SumUp-Abrechnung</h1>
+
+<div class="period-info">
+    <strong>Bankgutschrift:</strong> CHF {{ payout.bank_credit_amount }} am {{ payout.bank_credit_date|date:"d.m.Y" }}
+    &nbsp;|&nbsp; <strong>Mitteilung:</strong> {{ payout.sumup_reference }}<br>
+    <strong>Zahlungen:</strong> {{ payout.period_label }} ({{ line_items|length }} Kartenzahlungen)<br>
+    <strong>Status Abgleich:</strong>
+    {% if is_balanced %}<span class="badge-ok">vollständig abgeglichen</span>{% else %}<span class="badge-err">{{ open_count }} offene Position(en)</span>{% endif %}
+    {% if payout.completed_at %} &nbsp;|&nbsp; abgeschlossen {{ payout.completed_at|date:"d.m.Y H:i" }}{% if payout.created_by %} ({{ payout.created_by.get_full_name|default:payout.created_by.username }}){% endif %}{% endif %}
+</div>
+
+<h2>Buchungssätze</h2>
+<table>
+    <thead>
+        <tr><th>Datum</th><th>Konto</th><th class="text-right">Soll</th><th class="text-right">Haben</th><th>Text</th></tr>
+    </thead>
+    <tbody>
+    {% for b in proposal.bookings %}
+        {% for l in b.lines %}
+        <tr class="buchung-row">
+            <td>{% if forloop.first %}{{ b.date|date:"d.m.Y" }}{% endif %}</td>
+            <td>{{ l.account }}</td>
+            <td class="text-right">{% if l.side == 'DR' %}{{ l.amount }}{% endif %}</td>
+            <td class="text-right">{% if l.side == 'CR' %}{{ l.amount }}{% endif %}</td>
+            <td>{{ l.text }}</td>
+        </tr>
+        {% endfor %}
+    {% endfor %}
+    {% for l in proposal.bank_booking.lines %}
+        <tr class="buchung-row">
+            <td>{% if forloop.first %}{{ proposal.bank_booking.date|date:"d.m.Y" }}{% endif %}</td>
+            <td>{{ l.account }}</td>
+            <td class="text-right">{% if l.side == 'DR' %}{{ l.amount }}{% endif %}</td>
+            <td class="text-right">{% if l.side == 'CR' %}{{ l.amount }}{% endif %}</td>
+            <td>{{ l.text }}</td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+<p class="note">1101 = Forderungen gegenüber Payment-Service-Provider (Durchlaufkonto SumUp).
+    Saldo 1101 nach Gutschrift: CHF {{ proposal.clearing_balance }}.</p>
+
+<h2>Abstimmung</h2>
+<table>
+    <tr><td>Kartenumsatz Laden (SupportElle)</td><td class="text-right">{{ laden_total }}</td></tr>
+    <tr><td>Kartenumsatz Café</td><td class="text-right">{{ cafe_total }}</td></tr>
+    {% if unknown_total %}<tr><td>Kartenumsatz ohne Kanal</td><td class="text-right badge-err">{{ unknown_total }}</td></tr>{% endif %}
+    <tr><td>./. Rückerstattungen</td><td class="text-right">{{ refunds_total }}</td></tr>
+    <tr><td>./. SumUp-Gebühren</td><td class="text-right">{{ line_fees }}</td></tr>
+    {% if extra_fees %}<tr><td>./. Nicht erstattete Gebühren von Rückerstattungen</td><td class="text-right">{{ extra_fees }}</td></tr>{% endif %}
+    <tr class="total-row"><td>= Berechnete Auszahlung</td><td class="text-right">{{ computed_net }}</td></tr>
+    <tr><td>Effektive Bankgutschrift</td><td class="text-right">{{ payout.bank_credit_amount }}</td></tr>
+    <tr class="total-row"><td>Differenz (muss 0.00 sein)</td><td class="text-right">{{ net_delta }}</td></tr>
+</table>
+
+{% if refund_items %}
+<h2>Rückerstattungen</h2>
+<table>
+    <thead><tr><th>Datum</th><th>Zahlung</th><th>Sale</th><th>Kanal</th><th class="text-right">Betrag</th></tr></thead>
+    <tbody>
+    {% for i in refund_items %}
+        <tr>
+            <td>{{ i.sumup_timestamp|date:"d.m.Y" }}</td>
+            <td>{{ i.sumup_tx_code }}</td>
+            <td>{% if i.sale %}#{{ i.sale.pk }}{% else %}–{% endif %}</td>
+            <td>{{ i.get_channel_display }}</td>
+            <td class="text-right">{{ i.sumup_amount }}</td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+
+<h2>Kartenzahlungen dieser Gutschrift</h2>
+<table>
+    <thead>
+        <tr><th>Datum</th><th>SumUp-Code</th><th>Sale</th><th>Kanal</th>
+            <th class="text-right">Brutto</th><th class="text-right">Gebühr</th><th class="text-right">Ausbezahlt</th></tr>
+    </thead>
+    <tbody>
+    {% for i in line_items %}
+        <tr>
+            <td>{{ i.sumup_timestamp|date:"d.m.Y H:i" }}</td>
+            <td>{{ i.sumup_tx_code }}</td>
+            <td>{% if i.sale %}#{{ i.sale.pk }}{% else %}–{% endif %}{% if i.match_status != 'MATCHED' %} <span class="badge-warn">({{ i.get_match_status_display }})</span>{% endif %}</td>
+            <td>{{ i.get_channel_display }}</td>
+            <td class="text-right">{{ i.sumup_amount }}</td>
+            <td class="text-right">{{ i.sumup_fee }}</td>
+            <td class="text-right">{{ i.sumup_net }}</td>
+        </tr>
+    {% endfor %}
+        <tr class="total-row">
+            <td colspan="4">Total</td>
+            <td class="text-right">{{ gross_total }}</td>
+            <td class="text-right">{{ line_fees }}</td>
+            <td class="text-right">{{ payout.bank_credit_amount }}</td>
+        </tr>
+    </tbody>
+</table>
+
+{% if open_items or warnings %}
+<h2>Offene Punkte</h2>
+<ul>
+    {% for w in warnings %}<li class="badge-err">{{ w }}</li>{% endfor %}
+    {% for i in open_items %}<li>{{ i.get_match_status_display }}: {{ i.sumup_tx_code|default:"–" }} {% if i.sale %}Sale #{{ i.sale.pk }}{% endif %} CHF {{ i.sumup_amount|default:i.sk_amount }}</li>{% endfor %}
+</ul>
+{% endif %}
+
+<p class="note">
+    Automatisch erstellt durch Stock Keeper (SumUp-Abgleich v2) aus den Auszahlungsdaten von SumUp.
+    Jede Kartenzahlung ist über den SumUp-Transaktionscode einem Verkauf zugeordnet. Alle Beträge in CHF.
+</p>
+
+<div id="footer-content">
+    <p style="font-size: 7pt; color: #999; text-align: center;">
+        SupportElle by Mileja GmbH &mdash; {{ payout.sumup_reference }}
+    </p>
+</div>
+
+</body>
+</html>

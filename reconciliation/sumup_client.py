@@ -2,25 +2,27 @@
 SumUp API Client für stock-keeper Reconciliation.
 
 Endpunkte:
-  GET /v0.1/me/financials/payouts       — Auszahlungsliste (start_date, end_date Pflicht)
-  GET /v0.1/me/transactions/history     — Transaktionshistorie
+  GET /v0.1/me/financials/payouts       — Auszahlungszeilen (start_date, end_date Pflicht)
+  GET /v0.1/me/transactions/history     — Transaktionshistorie (paginiert)
 
-Payout-Struktur: Jede Transaktion hat ihren eigenen Payout-Eintrag.
-Die monatliche Bankgutschrift ist die Summe aller Payout-Amounts eines Auszahlungsdatums.
-Mapping: payout.transaction_code == transaction.transaction_code (1:1)
+Aufbau der Auszahlungsdaten: siehe reconciliation/ledger.py.
 
 Auth: Bearer Token aus settings.SUMUP_API_KEY
 """
 
-import requests
 import logging
-from datetime import datetime, date, timedelta
-from decimal import Decimal
+from datetime import date, timedelta
+
+import requests
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
 SUMUP_BASE = 'https://api.sumup.com'
+HISTORY_PATH = '/v0.1/me/transactions/history'
+PAYOUTS_PATH = '/v0.1/me/financials/payouts'
+PAGE_LIMIT = 100
+MAX_PAGES = 200
 
 
 class SumUpAPIError(Exception):
@@ -41,145 +43,58 @@ class SumUpClient:
     def _get(self, path, params=None):
         url = f"{SUMUP_BASE}{path}"
         try:
-            resp = self.session.get(url, params=params, timeout=15)
+            resp = self.session.get(url, params=params, timeout=30)
             resp.raise_for_status()
             return resp.json()
         except requests.RequestException as e:
             raise SumUpAPIError(f"SumUp API Fehler: {e}")
 
-    def get_payouts_for_date(self, credit_date: date) -> list[dict]:
-        """
-        Lädt alle Payouts für ein bestimmtes Auszahlungsdatum.
-        SumUp zahlt monatlich aus — alle Payouts eines Monats haben das gleiche Datum.
-        """
-        # ±1 Tag Toleranz
-        start = credit_date - timedelta(days=1)
-        end = credit_date + timedelta(days=1)
-        data = self._get('/v0.1/me/financials/payouts', params={
+    # ── Auszahlungen ──────────────────────────────────────────────────────
+
+    def get_payout_entries(self, start: date, end: date) -> list[dict]:
+        """Alle Auszahlungs-Einträge (PAYOUT + REFUND_DEDUCTION) im Zeitraum."""
+        data = self._get(PAYOUTS_PATH, params={
             'start_date': start.isoformat(),
             'end_date': end.isoformat(),
         })
-        # API gibt direkt ein Array zurück
-        payouts = data if isinstance(data, list) else data.get('items', [])
-        # Nur Payouts am exakten Datum
-        return [p for p in payouts if p.get('date') == credit_date.isoformat()]
+        return data if isinstance(data, list) else data.get('items', [])
 
-    def find_payouts_for_credit(self, amount: Decimal, credit_date: date) -> list[dict]:
-        """
-        Findet die Payouts die zu einer Bankgutschrift passen.
-        Sucht in einem ±3 Tage Fenster und prüft ob die Summe der Payouts
-        eines Datums dem Gutschriftsbetrag entspricht.
-        """
-        start = credit_date - timedelta(days=3)
-        end = credit_date + timedelta(days=3)
-        data = self._get('/v0.1/me/financials/payouts', params={
-            'start_date': start.isoformat(),
-            'end_date': end.isoformat(),
-        })
-        all_payouts = data if isinstance(data, list) else data.get('items', [])
-
-        # Gruppieren nach Datum
-        from collections import defaultdict
-        by_date = defaultdict(list)
-        for p in all_payouts:
-            by_date[p.get('date', '')].append(p)
-
-        # Datum finden dessen Summe zum Betrag passt
-        for payout_date, payouts in by_date.items():
-            total = sum(Decimal(str(p.get('amount', 0))) for p in payouts)
-            if abs(total - amount) <= Decimal('0.10'):
-                logger.info(
-                    f"Payout-Datum gefunden: {payout_date}, "
-                    f"{len(payouts)} Payouts, Summe={total}"
-                )
-                return payouts
-
-        logger.warning(f"Kein passendes Payout-Datum für CHF {amount} um {credit_date}")
-        return []
+    # ── Transaktionen ─────────────────────────────────────────────────────
 
     def get_transactions_in_window(self, period_start: date, period_end: date) -> list[dict]:
         """
-        Lädt alle Transaktionen der Transaktionshistorie im Zeitraum (paginiert).
-        Enthält PAYMENT- wie REFUND-Einträge.
+        Alle Transaktionen (PAYMENT/REFUND, jeder Status) im Zeitraum.
+
+        SumUp liefert den next-Link als reinen Query-String (ohne Pfad); er wird
+        an den History-Pfad angehängt. Bricht die Paginierung ab, wird ein
+        Fehler geworfen statt still eine unvollständige Liste zu liefern.
         """
-        all_transactions = []
-        params = {
+        data = self._get(HISTORY_PATH, params={
             'oldest_time': period_start.isoformat() + 'T00:00:00Z',
             'newest_time': period_end.isoformat() + 'T23:59:59Z',
-            'limit': 100,
-        }
+            'limit': PAGE_LIMIT,
+        })
+        items = list(data.get('items', []))
+        for _ in range(MAX_PAGES):
+            next_link = next((l for l in data.get('links', []) if l.get('rel') == 'next'), None)
+            if not next_link or not next_link.get('href'):
+                return items
+            href = next_link['href']
+            path = href if href.startswith('/') else f"{HISTORY_PATH}?{href.lstrip('?')}"
+            data = self._get(path)
+            items.extend(data.get('items', []))
+        raise SumUpAPIError(f"Paginierung nach {MAX_PAGES} Seiten abgebrochen")
 
-        data = self._get('/v0.1/me/transactions/history', params=params)
-        items = data.get('items', [])
-        all_transactions.extend(items)
 
-        # Paginierung über links
-        while len(items) >= 100 and 'links' in data:
-            links = data.get('links', [])
-            next_link = next((l for l in links if l.get('rel') == 'next'), None)
-            if not next_link:
-                break
-            next_url = next_link.get('href', '')
-            if not next_url:
-                break
-            try:
-                resp = self.session.get(next_url, timeout=15)
-                resp.raise_for_status()
-                data = resp.json()
-                items = data.get('items', [])
-                all_transactions.extend(items)
-            except requests.RequestException:
-                break
-
-        return all_transactions
-
-    def get_transactions_by_codes(self, transaction_codes: set[str],
-                                  period_start: date, period_end: date) -> list[dict]:
-        """
-        Lädt Transaktionen für einen Zeitraum und filtert auf die angegebenen
-        transaction_codes.
-        """
-        all_transactions = self.get_transactions_in_window(period_start, period_end)
-        matched = [t for t in all_transactions if t.get('transaction_code') in transaction_codes]
-        logger.info(
-            f"SumUp: {len(all_transactions)} Transaktionen geladen, "
-            f"{len(matched)} matched auf Payout-Codes"
-        )
-        return matched
-
-    def get_payout_transactions(self, payouts: list[dict]) -> tuple[list[dict], date, date]:
-        """
-        Lädt die Transaktions-Details für eine Liste von Payouts.
-
-        Returns:
-            (transactions, period_start, period_end)
-        """
-        if not payouts:
-            return [], None, None
-
-        # Transaction codes aus Payouts
-        tx_codes = set(p['transaction_code'] for p in payouts)
-
-        # Geschätzten Zeitraum ermitteln: Payouts des Monats vor dem Auszahlungsdatum
-        payout_date = date.fromisoformat(payouts[0]['date'])
-        # Transaktionen sind typischerweise vom Vormonat
-        period_end = payout_date.replace(day=1) - timedelta(days=1)  # Letzter Tag Vormonat
-        period_start = period_end.replace(day=1)  # Erster Tag Vormonat
-
-        # Etwas Puffer geben
-        search_start = period_start - timedelta(days=5)
-        search_end = period_end + timedelta(days=5)
-
-        transactions = self.get_transactions_by_codes(tx_codes, search_start, search_end)
-
-        # Echte Periode aus Timestamps ableiten
-        if transactions:
-            timestamps = sorted(
-                datetime.fromisoformat(t['timestamp'].replace('Z', '+00:00')).date()
-                for t in transactions if t.get('timestamp')
-            )
-            if timestamps:
-                period_start = timestamps[0]
-                period_end = timestamps[-1]
-
-        return transactions, period_start, period_end
+def load_ledger_inputs(client: SumUpClient, payout_date: date,
+                       history_days: int = 400, txn_days: int = 75):
+    """
+    Lädt die Rohdaten für die Ledger einer Auszahlung:
+      * Auszahlungs-Einträge der letzten `history_days` (für "war schon ausbezahlt")
+      * Transaktionen der letzten `txn_days` vor der Auszahlung (Bruttobeträge)
+    """
+    entries = client.get_payout_entries(payout_date - timedelta(days=history_days),
+                                        payout_date + timedelta(days=1))
+    txns = client.get_transactions_in_window(payout_date - timedelta(days=txn_days),
+                                             payout_date)
+    return entries, txns

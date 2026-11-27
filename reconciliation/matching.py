@@ -1,285 +1,187 @@
 """
-Matching-Engine: Verbindet SumUp-Transaktionen mit Stock Keeper Sales.
+Matching-Engine v2: verbindet ein SumUp-Auszahlungs-Ledger exakt mit Stock Keeper.
 
-Matching-Hierarchie (Tier 1 zuerst, dann Fallbacks):
+Schlüssel ist ausschliesslich der SumUp transaction_code, den die POS-Kasse
+als Sale.transaction_id speichert. Keine Betrag/Zeit-Heuristik mehr — sie hat
+in der Vergangenheit Refunds als Zahlungen und Zahlungen der falschen
+Transaktion zugeordnet.
 
-  Tier 1 — EXACT:       sumup.client_transaction_id == str(sale.id)
-  Tier 2 — AMOUNT_TIME: sumup.amount == sale.total_amount_gross UND |Δt| ≤ 2 Minuten
-  Tier 3 — AMOUNT_DATE: sumup.amount == sale.total_amount_gross UND gleicher Tag
-  Tier 4 — NO_MATCH:    Keine Übereinstimmung → als Diskrepanz kennzeichnen
+Die Beträge für die Buchhaltung kommen immer aus SumUp. Stock Keeper liefert
+den Kanal (Laden / Café) und wird auf Konsistenz geprüft:
 
-Hinweis: Aktuell übergibt die POS-Kasse keine Sale-ID an SumUp (nur Kauf-{timestamp}),
-daher funktioniert Tier 1 nicht für historische Daten. Matching läuft über Tier 2/3.
-
-Gebühren: Die SumUp Transactions API liefert kein fee_amount pro Transaktion.
-Die Gebühren kommen aus dem Payout-Objekt (payout.fee) und werden separat zugeordnet.
-
-Refund-Abzug: Zieht SumUp bei einer Rückerstattung die nicht erstattete
-Bearbeitungsgebühr von der Auszahlungszeile einer (anderen) Transaktion ab, ist
-deren Payout-Netto kleiner als (Brutto − eigene Gebühr). Diese Differenz wird als
-sumup_refund_deduction gespeichert und faktisch wie eine zusätzliche Gebühr
-behandelt; sumup_amount bleibt der volle Transaktionsbetrag.
+  MATCHED     genau ein aktiver SK-Sale, Betrag identisch
+  GAP         genau ein Sale, Betrag weicht ab           → prüfen
+  DUPLICATE   mehrere aktive Sales zum selben Code         → Duplikat stornieren
+  ONLY_SUMUP  kein Sale                                    → nacherfassen / Kanal setzen
+  REFUND      Rückerstattung (Erlösminderung), Kanal vom Original-Sale
+  ONLY_SK     SK-Sale (SUMUP) im Zeitraum ohne SumUp-Zahlung → Zahlungsart / Storno
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from commerce.models import Sale
+from .ledger import PayoutLedger
 from .models import ReconciliationItem, SumUpPayout
 
 logger = logging.getLogger(__name__)
 
+LOCAL_TZ = ZoneInfo('Europe/Zurich')
 CAFE_CATEGORY_KEYWORDS = ['café', 'cafe', 'kaffee', 'coffee', 'snack', 'getränk', 'food']
 AMOUNT_TOLERANCE = Decimal('0.01')
-TIME_WINDOW_MINUTES = 2
-FEE_TOLERANCE_PCT = Decimal('3.0')
+RECON_IDEM_PREFIX = 'recon-item-'
+
+Item = ReconciliationItem
+Status = ReconciliationItem.MatchStatus
 
 
 def detect_channel(sale: Sale | None) -> str:
     if sale is None:
-        return ReconciliationItem.Channel.UNKNOWN
-
-    try:
-        categories = [
-            item.product.category.name.lower()
-            for item in sale.items.select_related('product__category').all()
-            if item.product and item.product.category
-        ]
-    except Exception:
-        return ReconciliationItem.Channel.UNKNOWN
-
+        return Item.Channel.UNKNOWN
+    categories = [
+        item.product.category.name.lower()
+        for item in sale.items.select_related('product__category').all()
+        if item.product and item.product.category
+    ]
     if not categories:
-        return ReconciliationItem.Channel.UNKNOWN
-
-    cafe_count = sum(
-        1 for cat in categories
-        if any(kw in cat for kw in CAFE_CATEGORY_KEYWORDS)
-    )
-
+        return Item.Channel.UNKNOWN
+    cafe_count = sum(1 for cat in categories if any(kw in cat for kw in CAFE_CATEGORY_KEYWORDS))
     if cafe_count / len(categories) > 0.5:
-        return ReconciliationItem.Channel.CAFE
-    return ReconciliationItem.Channel.LADEN
+        return Item.Channel.CAFE
+    return Item.Channel.LADEN
 
 
-def parse_sumup_timestamp(ts_str: str) -> datetime | None:
-    if not ts_str:
-        return None
-    try:
-        return datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
-    except Exception:
-        return None
+def _primary_sale(sales: list[Sale]) -> Sale:
+    """Bei Duplikaten: der an der Kasse erfasste Sale (nicht die Recon-Nachbuchung)."""
+    def key(s):
+        return ((s.idempotency_key or '').startswith(RECON_IDEM_PREFIX), s.date, s.id)
+    return sorted(sales, key=key)[0]
 
 
-def _refund_deduction(txn_amount: Decimal, tx_code: str,
-                      payout_settled: dict[str, Decimal]) -> Decimal:
-    """
-    Refund-Abzug = Brutto − tatsächlich abgerechneter Betrag (Payout-Netto + Gebühr).
-    > 0, wenn SumUp zusätzlich zur eigenen Gebühr etwas von der Auszahlungszeile
-    abgezogen hat (nicht erstattete Gebühr einer Rückerstattung). Sonst 0.
-    """
-    settled = payout_settled.get(tx_code)
-    if settled is None:
-        return Decimal('0')
-    diff = txn_amount - settled
-    return diff if diff > Decimal('0') else Decimal('0')
-
-
-def compute_gap_pct(sk_amount: Decimal, sumup_amount: Decimal) -> Decimal:
-    if sk_amount == 0:
-        return Decimal('100')
-    return abs((sk_amount - sumup_amount) / sk_amount * 100).quantize(Decimal('0.01'))
-
-
-def run_matching(payout: SumUpPayout, sumup_transactions: list[dict],
-                 payout_fees: dict[str, Decimal] = None,
-                 payout_settled: dict[str, Decimal] = None) -> list[ReconciliationItem]:
-    """
-    Hauptfunktion: Führt das Matching für einen Payout durch.
-
-    Args:
-        payout: SumUpPayout-Objekt
-        sumup_transactions: Liste von SumUp-Transaktionsdaten
-        payout_fees: Mapping von transaction_code → fee (aus Payouts)
-        payout_settled: Mapping von transaction_code → tatsächlich abgerechneter
-            Bruttobetrag (Payout-Netto + Gebühr). Fällt eine Teilrückerstattung an,
-            ist dieser Wert kleiner als txn.amount.
-    """
-    if not payout.period_start or not payout.period_end:
-        raise ValueError("Payout hat keine Periode — bitte zuerst Periode ermitteln")
-
-    payout_fees = payout_fees or {}
-    payout_settled = payout_settled or {}
-
-    # Stock Keeper Sales für den Zeitraum laden
-    sk_sales = list(
-        Sale.objects.filter(
-            payment_method='SUMUP',
-            status='COMPLETED',
-            date__date__gte=payout.period_start,
-            date__date__lte=payout.period_end,
-        ).prefetch_related('items__product__category')
+def _line_item(payout, line, sales) -> ReconciliationItem:
+    item = Item(
+        payout=payout,
+        sumup_tx_id=line.transaction_id,
+        sumup_tx_code=line.transaction_code,
+        sumup_amount=line.gross,
+        sumup_fee=line.fee,
+        sumup_net=line.net,
+        sumup_refund_deduction=line.deduction,
+        sumup_timestamp=line.timestamp,
+        match_tier=Item.MatchTier.EXACT,
+        resolution=Item.Resolution.PENDING,
     )
+    active = [s for s in sales if s.status == Sale.Status.COMPLETED]
+    candidates = active or sales
 
-    logger.info(
-        f"Matching: {len(sumup_transactions)} SumUp Txn vs. {len(sk_sales)} SK Sales "
-        f"({payout.period_start} – {payout.period_end})"
-    )
+    if not candidates:
+        item.match_tier = Item.MatchTier.NO_MATCH
+        item.match_status = Status.ONLY_SUMUP
+        item.gap_amount = line.gross or Decimal('0')
+        item.gap_pct = Decimal('100')
+        item.channel = Item.Channel.UNKNOWN
+        return item
 
-    items = []
-    matched_sale_ids = set()
-    matched_sumup_ids = set()
+    sale = _primary_sale(candidates)
+    item.sale = sale
+    item.sk_amount = sale.total_amount_gross
+    item.sk_timestamp = sale.date
+    item.channel = detect_channel(sale)
 
-    # ── Tier 1: Exakter Match via client_transaction_id ──────────────────────
-    sale_by_id = {str(s.id): s for s in sk_sales}
+    if len(active) > 1:
+        item.match_status = Status.DUPLICATE
+        others = sorted(s.id for s in active if s.id != sale.id)
+        item.resolution_note = 'Duplikate: ' + ', '.join(f'#{i}' for i in others)
+        return item
 
-    for txn in sumup_transactions:
-        foreign_id = str(txn.get('client_transaction_id', '') or '').strip()
-        if foreign_id and foreign_id in sale_by_id:
-            sale = sale_by_id[foreign_id]
-            sk_amount = Decimal(str(sale.total_amount_gross))
-            tx_code = txn.get('transaction_code', '')
-            sumup_amount = Decimal(str(txn.get('amount', 0)))
-            refund_deduction = _refund_deduction(sumup_amount, tx_code, payout_settled)
-            gap = abs(sk_amount - sumup_amount)
-            gap_pct = compute_gap_pct(sk_amount, sumup_amount)
-            fee = payout_fees.get(tx_code, Decimal(0))
+    gap = abs((sale.total_amount_gross or Decimal('0')) - (line.gross or Decimal('0')))
+    item.gap_amount = gap
+    if line.gross and gap > AMOUNT_TOLERANCE:
+        item.match_status = Status.GAP
+        item.gap_pct = (gap / line.gross * 100).quantize(Decimal('0.01'))
+    else:
+        item.match_status = Status.MATCHED
+    return item
 
-            status = (
-                ReconciliationItem.MatchStatus.GAP
-                if gap_pct > FEE_TOLERANCE_PCT
-                else ReconciliationItem.MatchStatus.MATCHED
-            )
 
-            item = ReconciliationItem(
-                payout=payout,
-                sale=sale,
-                sk_amount=sk_amount,
-                sk_timestamp=sale.date,
-                sumup_tx_id=txn.get('id', ''),
-                sumup_tx_code=tx_code,
-                sumup_foreign_tx_id=foreign_id,
-                sumup_amount=sumup_amount,
-                sumup_fee=fee,
-                sumup_refund_deduction=refund_deduction,
-                sumup_timestamp=parse_sumup_timestamp(txn.get('timestamp')),
-                match_tier=ReconciliationItem.MatchTier.EXACT,
-                match_status=status,
-                gap_amount=gap,
-                gap_pct=gap_pct,
-                channel=detect_channel(sale),
-                resolution=ReconciliationItem.Resolution.PENDING,
-            )
-            items.append(item)
-            matched_sale_ids.add(sale.id)
-            matched_sumup_ids.add(txn.get('transaction_code'))
+def run_matching(payout: SumUpPayout, ledger: PayoutLedger,
+                 known_payment_codes: set[str]) -> list[ReconciliationItem]:
+    """
+    Erstellt (ungespeichert) alle ReconciliationItems einer Auszahlung.
 
-    # ── Tier 2 + 3: Betrag + Zeit / Betrag + Tag ─��────────────────────────────
-    unmatched_sales = [s for s in sk_sales if s.id not in matched_sale_ids]
-    unmatched_txns = [t for t in sumup_transactions if t.get('transaction_code') not in matched_sumup_ids]
+    known_payment_codes: alle erfolgreichen SumUp-Zahlungscodes im geladenen
+        Zeitfenster — ein SK-Sale mit einem dieser Codes ist kein ONLY_SK, auch
+        wenn er (noch) nicht in dieser Auszahlung steckt.
+    """
+    codes = [l.transaction_code for l in ledger.lines]
+    refund_codes = [r.refunded_code for r in ledger.refunds]
+    sales_by_code: dict[str, list[Sale]] = {}
+    for s in (Sale.objects.filter(transaction_id__in=set(codes) | set(refund_codes))
+              .prefetch_related('items__product__category')):
+        sales_by_code.setdefault(s.transaction_id, []).append(s)
 
-    for txn in unmatched_txns:
-        tx_code = txn.get('transaction_code', '')
-        sumup_amount = Decimal(str(txn.get('amount', 0)))
-        refund_deduction = _refund_deduction(sumup_amount, tx_code, payout_settled)
-        sumup_ts = parse_sumup_timestamp(txn.get('timestamp'))
-        fee = payout_fees.get(tx_code, Decimal(0))
-        matched_sale = None
-        tier = None
+    items = [_line_item(payout, line, sales_by_code.get(line.transaction_code, []))
+             for line in ledger.lines]
 
-        for sale in unmatched_sales:
-            if sale.id in matched_sale_ids:
-                continue
-            sk_amount = Decimal(str(sale.total_amount_gross))
-            if abs(sk_amount - sumup_amount) > AMOUNT_TOLERANCE:
-                continue
-
-            # Tier 2: ±2 Minuten
-            if sumup_ts and sale.date:
-                try:
-                    delta = abs((sumup_ts - sale.date.astimezone(timezone.utc)).total_seconds())
-                    if delta <= TIME_WINDOW_MINUTES * 60:
-                        matched_sale = sale
-                        tier = ReconciliationItem.MatchTier.AMOUNT_TIME
-                        break
-                except Exception:
-                    pass
-
-            # Tier 3: Gleicher Tag
-            if sumup_ts and sale.date:
-                if sumup_ts.date() == sale.date.date():
-                    matched_sale = sale
-                    tier = ReconciliationItem.MatchTier.AMOUNT_DATE
-
-        if matched_sale:
-            sk_amount = Decimal(str(matched_sale.total_amount_gross))
-            gap_pct = compute_gap_pct(sk_amount, sumup_amount)
-            status = (
-                ReconciliationItem.MatchStatus.GAP
-                if gap_pct > FEE_TOLERANCE_PCT
-                else ReconciliationItem.MatchStatus.MATCHED
-            )
-            item = ReconciliationItem(
-                payout=payout,
-                sale=matched_sale,
-                sk_amount=sk_amount,
-                sk_timestamp=matched_sale.date,
-                sumup_tx_id=txn.get('id', ''),
-                sumup_tx_code=tx_code,
-                sumup_amount=sumup_amount,
-                sumup_fee=fee,
-                sumup_refund_deduction=refund_deduction,
-                sumup_timestamp=sumup_ts,
-                match_tier=tier,
-                match_status=status,
-                gap_amount=abs(sk_amount - sumup_amount),
-                gap_pct=gap_pct,
-                channel=detect_channel(matched_sale),
-                resolution=ReconciliationItem.Resolution.PENDING,
-            )
-            items.append(item)
-            matched_sale_ids.add(matched_sale.id)
-            matched_sumup_ids.add(tx_code)
-        else:
-            # Nur SumUp — kein SK-Eintrag
-            item = ReconciliationItem(
-                payout=payout,
-                sumup_tx_id=txn.get('id', ''),
-                sumup_tx_code=tx_code,
-                sumup_amount=sumup_amount,
-                sumup_fee=fee,
-                sumup_refund_deduction=refund_deduction,
-                sumup_timestamp=sumup_ts,
-                match_tier=ReconciliationItem.MatchTier.NO_MATCH,
-                match_status=ReconciliationItem.MatchStatus.ONLY_SUMUP,
-                gap_amount=sumup_amount,
-                gap_pct=Decimal('100'),
-                channel=ReconciliationItem.Channel.UNKNOWN,
-                resolution=ReconciliationItem.Resolution.PENDING,
-            )
-            items.append(item)
-
-    # ── SK Sales ohne SumUp-Treffer ─────────────────────────────────────────
-    for sale in unmatched_sales:
-        if sale.id in matched_sale_ids:
-            continue
-        sk_amount = Decimal(str(sale.total_amount_gross))
-        item = ReconciliationItem(
+    for refund in ledger.refunds:
+        sales = sales_by_code.get(refund.refunded_code, [])
+        sale = _primary_sale(sales) if sales else None
+        channel = detect_channel(sale)
+        items.append(Item(
             payout=payout,
             sale=sale,
-            sk_amount=sk_amount,
+            sk_amount=sale.total_amount_gross if sale else None,
+            sk_timestamp=sale.date if sale else None,
+            sumup_tx_code=refund.refunded_code,
+            sumup_amount=refund.amount,
+            sumup_timestamp=datetime.combine(refund.refund_date, time(12), LOCAL_TZ),
+            match_tier=Item.MatchTier.EXACT,
+            match_status=Status.REFUND,
+            channel=channel,
+            resolution=(Item.Resolution.ACCEPTED if channel != Item.Channel.UNKNOWN
+                        else Item.Resolution.PENDING),
+            resolution_note=f'Abgezogen von {refund.deducted_from_code} am '
+                            f'{refund.refund_date:%d.%m.%Y}',
+        ))
+
+    items.extend(_only_sk_items(payout, ledger, known_payment_codes))
+    return items
+
+
+def _only_sk_items(payout, ledger, known_payment_codes):
+    """SK-Sales (SUMUP, aktiv) im Zeitraum der Auszahlung ohne SumUp-Zahlung."""
+    if not ledger.period_start:
+        return []
+    start = datetime.combine(ledger.period_start, time.min, LOCAL_TZ)
+    end = datetime.combine(ledger.period_end + timedelta(days=1), time.min, LOCAL_TZ)
+    already_flagged = set(
+        Item.objects.filter(match_status=Status.ONLY_SK, payout__engine_version__gte=2)
+        .exclude(payout__status=SumUpPayout.Status.SUPERSEDED)
+        .exclude(payout=payout)
+        .values_list('sale_id', flat=True)
+    )
+    out = []
+    for sale in (Sale.objects.filter(payment_method=Sale.PaymentMethod.SUMUP,
+                                     status=Sale.Status.COMPLETED,
+                                     date__gte=start, date__lt=end)
+                 .prefetch_related('items__product__category')):
+        if sale.transaction_id and sale.transaction_id in known_payment_codes:
+            continue
+        if sale.id in already_flagged:
+            continue
+        out.append(Item(
+            payout=payout,
+            sale=sale,
+            sk_amount=sale.total_amount_gross,
             sk_timestamp=sale.date,
-            match_tier=ReconciliationItem.MatchTier.NO_MATCH,
-            match_status=ReconciliationItem.MatchStatus.ONLY_SK,
-            gap_amount=sk_amount,
+            sumup_tx_code=sale.transaction_id or '',
+            match_tier=Item.MatchTier.NO_MATCH,
+            match_status=Status.ONLY_SK,
+            gap_amount=sale.total_amount_gross,
             gap_pct=Decimal('100'),
             channel=detect_channel(sale),
-            resolution=ReconciliationItem.Resolution.PENDING,
-        )
-        items.append(item)
-
-    logger.info(
-        f"Matching abgeschlossen: {sum(1 for i in items if i.match_status == 'MATCHED')} matched, "
-        f"{sum(1 for i in items if i.match_status != 'MATCHED')} Diskrepanzen"
-    )
-    return items
+            resolution=Item.Resolution.PENDING,
+        ))
+    return out

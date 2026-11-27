@@ -48,8 +48,27 @@ def render_reconciliation_pdf(template_src, context_dict):
     return HttpResponse(result.getvalue(), content_type='application/pdf')
 
 
+def voucher_pdf_bytes(payout) -> bytes | None:
+    """Beleg v2 als PDF-Bytes (für Ablage/KLARA-Upload)."""
+    response = generate_voucher_pdf(payout)
+    return response.content if response.status_code == 200 else None
+
+
 def generate_voucher_pdf(payout):
     """Generiert den Buchungsbeleg als PDF-Response."""
+    if payout.engine_version >= 2:
+        from .booking import LINE_STATUSES
+        from .models import ReconciliationItem
+        items = list(payout.items.select_related('sale').order_by('sumup_timestamp', 'pk'))
+        context = {
+            'payout': payout,
+            'line_items': [i for i in items if i.match_status in LINE_STATUSES],
+            'refund_items': [i for i in items
+                             if i.match_status == ReconciliationItem.MatchStatus.REFUND],
+        }
+        context.update(payout.booking_summary)
+        return render_reconciliation_pdf('reconciliation/voucher_pdf_v2.html', context)
+
     items = payout.items.all().order_by('sumup_timestamp', 'sk_timestamp')
 
     summary = payout.booking_summary

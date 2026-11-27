@@ -21,7 +21,34 @@
     {% endif %}
 
     <!-- Schlusssummen-Prüfung: Total vs. Bankgutschrift -->
+    {% if engine_version == 2 %}
+    {% for w in warnings %}
+    <div class="alert alert-danger"><i class="fas fa-exclamation-triangle mr-2"></i> SumUp-Daten: {{ w }}</div>
+    {% endfor %}
     {% if is_balanced %}
+    <div class="alert alert-success">
+        <i class="fas fa-check-circle mr-2"></i>
+        Abgleich geht auf: Umsatz CHF {{ gross_total }} − Rückerstattungen CHF {{ refunds_total }}
+        − Gebühren CHF {{ total_fees }} = <strong>CHF {{ computed_net }}</strong>
+        = Bankgutschrift <strong>CHF {{ payout.bank_credit_amount }}</strong>. Alle Zahlungen sind
+        exakt einem Verkauf zugeordnet — bereit zum Abschluss.
+    </div>
+    {% elif not net_matches %}
+    <div class="alert alert-danger">
+        <h5 class="mb-2"><i class="fas fa-exclamation-triangle mr-2"></i> Summen gehen nicht auf</h5>
+        Berechnet CHF {{ computed_net }} · Bankgutschrift CHF {{ payout.bank_credit_amount }}
+        · <strong>Differenz CHF {{ net_delta }}</strong>
+    </div>
+    {% else %}
+    <div class="alert alert-warning">
+        <h5 class="mb-2"><i class="fas fa-info-circle mr-2"></i> Beträge stimmen — {{ open_count }} Position(en) in Stock Keeper zu klären</h5>
+        Die Buchung basiert auf den SumUp-Beträgen (CHF {{ computed_net }} = Bankgutschrift).
+        Offen sind Zuordnungen in Stock Keeper: {{ only_sumup_count }} × Verkauf fehlt,
+        {{ only_sk_count }} × Verkauf ohne SumUp-Zahlung, {{ duplicate_count }} × Duplikat,
+        {{ gap_count }} × Betragsdifferenz{% if unknown_total %}, CHF {{ unknown_total }} ohne Kanal{% endif %}.
+    </div>
+    {% endif %}
+    {% elif is_balanced %}
     <div class="alert alert-success">
         <i class="fas fa-check-circle mr-2"></i>
         Abgleich geht auf: berechnetes Nettototal <strong>CHF {{ computed_net }}</strong>
@@ -109,8 +136,8 @@
         <div class="col-md-3">
             <div class="small-box bg-danger">
                 <div class="inner">
-                    <h3>{{ gap_count }}</h3>
-                    <p>Differenz</p>
+                    <h3>{{ gap_count }}{% if duplicate_count %} / {{ duplicate_count }}{% endif %}</h3>
+                    <p>Differenz{% if duplicate_count %} / Duplikat{% endif %}</p>
                 </div>
                 <div class="icon"><i class="fas fa-times-circle"></i></div>
             </div>
@@ -143,6 +170,7 @@
                 <div class="info-box-content">
                     <span class="info-box-text">SumUp Gebühren</span>
                     <span class="info-box-number">CHF {{ total_fees }}</span>
+                    {% if extra_fees and engine_version == 2 %}<small class="text-muted">inkl. CHF {{ extra_fees }} nicht erstattete Refund-Gebühr</small>{% endif %}
                 </div>
             </div>
         </div>
@@ -150,12 +178,56 @@
             <div class="info-box">
                 <span class="info-box-icon bg-warning"><i class="fas fa-rotate-left"></i></span>
                 <div class="info-box-content">
+                    {% if engine_version == 2 %}
+                    <span class="info-box-text">Rückerstattungen</span>
+                    <span class="info-box-number">CHF {{ refunds_total }}</span>
+                    {% else %}
                     <span class="info-box-text" title="Nicht erstattete Gebühren von Rückerstattungen">Abzüge (Refunds)</span>
                     <span class="info-box-number">CHF {{ refund_deductions|default:"0.00" }}</span>
+                    {% endif %}
                 </div>
             </div>
         </div>
     </div>
+
+    {% if engine_version == 2 %}
+    <!-- Buchungsvorschlag KLARA -->
+    <div class="card card-outline card-info">
+        <div class="card-header"><h3 class="card-title"><i class="fas fa-book mr-2"></i> Buchungsvorschlag KLARA (Durchlaufkonto 1101)</h3></div>
+        <div class="card-body p-0">
+            <table class="table table-sm mb-0">
+                <thead><tr><th>Datum</th><th>Konto</th><th class="text-right">Soll</th><th class="text-right">Haben</th><th>Text</th><th>Tag</th></tr></thead>
+                <tbody>
+                {% for b in proposal.bookings %}
+                    {% for l in b.lines %}
+                    <tr{% if forloop.first %} style="border-top:2px solid #dee2e6"{% endif %}>
+                        <td>{% if forloop.first %}{{ b.date|date:"d.m.Y" }}{% endif %}</td>
+                        <td>{{ l.account }}</td>
+                        <td class="text-right">{% if l.side == 'DR' %}{{ l.amount }}{% endif %}</td>
+                        <td class="text-right">{% if l.side == 'CR' %}{{ l.amount }}{% endif %}</td>
+                        <td>{{ l.text }}</td>
+                        <td><small>{{ l.tag }}</small></td>
+                    </tr>
+                    {% endfor %}
+                {% endfor %}
+                {% for l in proposal.bank_booking.lines %}
+                    <tr class="table-light"{% if forloop.first %} style="border-top:2px solid #dee2e6"{% endif %}>
+                        <td>{% if forloop.first %}{{ proposal.bank_booking.date|date:"d.m.Y" }}{% endif %}</td>
+                        <td>{{ l.account }}</td>
+                        <td class="text-right">{% if l.side == 'DR' %}{{ l.amount }}{% endif %}</td>
+                        <td class="text-right">{% if l.side == 'CR' %}{{ l.amount }}{% endif %}</td>
+                        <td>{{ l.text }}{% if forloop.first %} <small class="text-muted">(Bankabgleich)</small>{% endif %}</td>
+                        <td><small>{{ l.tag }}</small></td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+                <tfoot><tr><td colspan="6" class="{% if proposal.clearing_balance == 0 %}text-success{% else %}text-danger{% endif %}">
+                    Saldo 1101 nach Gutschrift: <strong>CHF {{ proposal.clearing_balance }}</strong> (muss 0.00 sein)
+                </td></tr></tfoot>
+            </table>
+        </div>
+    </div>
+    {% endif %}
 
     <!-- Transaktions-Tabelle -->
     <div class="card">
@@ -184,7 +256,7 @@
                     </thead>
                     <tbody>
                         {% for item in items %}
-                        <tr class="{% if item.match_status == 'MATCHED' %}table-success{% elif item.match_status == 'GAP' %}table-danger{% elif item.match_status == 'ONLY_SUMUP' or item.match_status == 'ONLY_SK' %}table-warning{% endif %}"
+                        <tr class="{% if item.match_status == 'MATCHED' %}table-success{% elif item.match_status == 'GAP' or item.match_status == 'DUPLICATE' %}table-danger{% elif item.match_status == 'REFUND' %}table-info{% elif item.match_status == 'ONLY_SUMUP' or item.match_status == 'ONLY_SK' %}table-warning{% endif %}"
                             id="item-row-{{ item.pk }}">
                             <td>
                                 {% if item.match_status == 'ONLY_SK' and item.sale and item.resolution == 'PENDING' %}
@@ -219,7 +291,7 @@
                                 {% endif %}
                             </td>
                             <td class="text-right">{{ item.sk_amount|default_if_none:"–" }}</td>
-                            <td class="text-right">{{ item.sumup_amount|default_if_none:"–" }}</td>
+                            <td class="text-right">{% if item.match_status == 'REFUND' %}−{% endif %}{{ item.sumup_amount|default_if_none:"–" }}</td>
                             <td class="text-right">{{ item.sumup_fee|default_if_none:"–" }}</td>
                             <td>
                                 {% if item.match_tier == 'EXACT' %}
@@ -251,51 +323,70 @@
                                         <span class="text-info">{{ item.get_resolution_display }}</span>
                                     {% endif %}
                                 </span>
+                                {% if item.match_status != 'MATCHED' %}<br><small class="text-muted">{{ item.get_match_status_display }}{% if item.resolution_note %} · {{ item.resolution_note }}{% endif %}</small>{% endif %}
                             </td>
                             <td>
-                                {% if item.match_status != 'MATCHED' and item.resolution == 'PENDING' %}
-                                    {% if item.match_status == 'ONLY_SK' %}
+                                {% if payout.status == 'IN_REVIEW' %}
+                                {% if item.resolution == 'PENDING' and item.match_status == 'ONLY_SK' %}
                                     <button class="btn btn-xs btn-outline-warning"
-                                            @click="resolveItem({{ item.pk }}, 'PAYMENT_TYPE_CHANGED', 'CASH')"
+                                            @click="resolveAndReload({{ item.pk }}, 'PAYMENT_TYPE_CHANGED', 'CASH')"
                                             title="Zahlungsart auf Bar ändern">
                                         <i class="fas fa-coins"></i> Bar
                                     </button>
                                     <button class="btn btn-xs btn-outline-info"
-                                            @click="resolveItem({{ item.pk }}, 'PAYMENT_TYPE_CHANGED', 'INVOICE')"
+                                            @click="resolveAndReload({{ item.pk }}, 'PAYMENT_TYPE_CHANGED', 'TWINT')"
+                                            title="Zahlungsart auf TWINT ändern">
+                                        TWINT
+                                    </button>
+                                    <button class="btn btn-xs btn-outline-info"
+                                            @click="resolveAndReload({{ item.pk }}, 'PAYMENT_TYPE_CHANGED', 'INVOICE')"
                                             title="Zahlungsart auf Rechnung ändern">
                                         <i class="fas fa-file-invoice"></i> Rechnung
                                     </button>
-                                    {% if item.sale %}
                                     <button class="btn btn-xs btn-outline-danger"
                                             @click="confirmDeleteSale([{itemPk: {{ item.pk }}, saleId: {{ item.sale.pk }}, amount: '{{ item.sk_amount }}'}])"
                                             title="Sale stornieren">
                                         <i class="fas fa-trash"></i>
                                     </button>
-                                    {% endif %}
-                                    {% elif item.match_status == 'ONLY_SUMUP' %}
+                                {% elif item.resolution == 'PENDING' and item.match_status == 'ONLY_SUMUP' %}
+                                    {% for c in item.link_candidates %}
+                                    <button class="btn btn-xs btn-warning"
+                                            @click="linkSale({{ item.pk }}, {{ c.sale.pk }})"
+                                            title="Verkauf ohne SumUp-Code, gleicher Betrag am gleichen Tag">
+                                        <i class="fas fa-link"></i> Mit #{{ c.sale.pk }} verknüpfen
+                                    </button>
+                                    {% endfor %}
                                     <button class="btn btn-xs btn-success"
                                             @click="createDiversesSale({{ item.pk }}, '{{ item.sumup_amount }}')"
-                                            title="Sale mit Produkt 'Diverses' anlegen">
+                                            title="Sale mit Produkt 'Diverses' (Laden) anlegen">
                                         <i class="fas fa-plus"></i> Diverses
                                     </button>
-                                    {% if item.sumup_amount and item.sumup_amount > 30 %}
                                     <button class="btn btn-xs btn-primary"
                                             @click="openProductPicker({{ item.pk }}, '{{ item.sumup_amount }}')"
-                                            title="Sale mit konkretem Produkt anlegen (empfohlen bei > CHF 30)">
-                                        <i class="fas fa-search"></i> Produkt wählen
+                                            title="Sale mit konkretem Produkt anlegen (z. B. Café-Artikel)">
+                                        <i class="fas fa-search"></i> Produkt
                                     </button>
-                                    {% endif %}
-                                    <button class="btn btn-xs btn-outline-info"
-                                            @click="resolveItem({{ item.pk }}, 'MANUAL', '')"
-                                            title="Manuell bearbeitet markieren">
-                                        <i class="fas fa-check"></i> Manuell
+                                {% elif item.resolution == 'PENDING' and item.match_status == 'GAP' %}
+                                    <button class="btn btn-xs btn-outline-success"
+                                            @click="resolveAndReload({{ item.pk }}, 'ACCEPTED', '')"
+                                            title="SumUp-Betrag gilt für die Buchung">
+                                        <i class="fas fa-check"></i> SumUp-Betrag ok
                                     </button>
-                                    {% endif %}
-                                    <button class="btn btn-xs btn-outline-secondary"
-                                            @click="resolveItem({{ item.pk }}, 'IGNORED', '')"
-                                            title="Ignorieren">
-                                        <i class="fas fa-eye-slash"></i>
+                                {% elif item.resolution == 'PENDING' and item.match_status == 'DUPLICATE' %}
+                                    <button class="btn btn-xs btn-outline-danger"
+                                            @click="if (confirm('Duplikate zu #{{ item.sale.pk }} stornieren? ({{ item.resolution_note }})')) resolveAndReload({{ item.pk }}, 'SALE_DELETED', '')"
+                                            title="Doppelt erfasste Sales stornieren, #{{ item.sale.pk }} behalten">
+                                        <i class="fas fa-clone"></i> Duplikat stornieren
                                     </button>
+                                {% endif %}
+                                {% if item.match_status != 'ONLY_SK' and item.channel == 'UNKNOWN' or item.match_status == 'ONLY_SUMUP' and item.resolution == 'PENDING' %}
+                                    <span class="text-nowrap">Kanal:
+                                    <button class="btn btn-xs btn-outline-primary"
+                                            @click="resolveAndReload({{ item.pk }}, 'MANUAL', '', 'LADEN')">Laden</button>
+                                    <button class="btn btn-xs btn-outline-primary"
+                                            @click="resolveAndReload({{ item.pk }}, 'MANUAL', '', 'CAFE')">Café</button>
+                                    </span>
+                                {% endif %}
                                 {% endif %}
                             </td>
                         </tr>
@@ -319,12 +410,13 @@
     </div>
 
     <!-- Aktionen -->
-    {% if payout.status != 'COMPLETED' %}
+    {% if payout.status == 'IN_REVIEW' %}
     <div class="mt-3 d-flex justify-content-between">
         <a href="{% url 'reconciliation:list' %}" class="btn btn-outline-secondary">
             <i class="fas fa-arrow-left mr-1"></i> Zurück
         </a>
-        <button class="btn btn-success btn-lg" @click="document.getElementById('complete-modal').style.display='flex'">
+        <button class="btn btn-success btn-lg" {% if engine_version == 2 and not is_balanced %}disabled title="Erst alle Positionen klären"{% endif %}
+                @click="document.getElementById('complete-modal').style.display='flex'">
             <i class="fas fa-check-double mr-2"></i> Abschliessen & PDF
         </button>
     </div>
@@ -583,14 +675,36 @@ function reconciliationReview() {
             this.deleteQueue = [];
             this.deleteConfirmText = '';
             this.selectedItems = [];
+            window.location.reload();
         },
 
-        resolveItem(itemPk, resolution, newPaymentMethod) {
+        linkSale(itemPk, saleId) {
+            if (!confirm('SumUp-Zahlung mit Sale #' + saleId + ' verknüpfen? (SumUp-Code wird beim Sale nachgetragen)')) return;
+            const formData = new FormData();
+            formData.append('sale_id', saleId);
+            fetch(`{% url 'reconciliation:list' %}{{ payout.pk }}/item/${itemPk}/link-sale/`, {
+                method: 'POST', body: formData,
+                headers: {'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]')?.value || '{{ csrf_token }}'}
+            })
+            .then(r => r.json())
+            .then(d => { if (d.error) { alert('Fehler: ' + d.error); } else { window.location.reload(); } })
+            .catch(err => alert('Fehler: ' + err));
+        },
+
+        resolveAndReload(itemPk, resolution, newPaymentMethod, channel) {
+            return this.resolveItem(itemPk, resolution, newPaymentMethod, channel)
+                .then(() => window.location.reload());
+        },
+
+        resolveItem(itemPk, resolution, newPaymentMethod, channel) {
             const formData = new FormData();
             formData.append('resolution', resolution);
             formData.append('resolution_note', '');
             if (newPaymentMethod) {
                 formData.append('new_payment_method', newPaymentMethod);
+            }
+            if (channel) {
+                formData.append('channel', channel);
             }
 
             return fetch(`{% url 'reconciliation:list' %}{{ payout.pk }}/item/${itemPk}/resolve/`, {
@@ -603,6 +717,7 @@ function reconciliationReview() {
             })
             .then(r => r.json())
             .then(data => {
+                if (data.error) { alert('Fehler: ' + data.error); return; }
                 if (data.status === 'ok') {
                     const span = document.getElementById('resolution-' + itemPk);
                     if (span) span.innerHTML = '<span class="text-info">' + data.resolution + '</span>';

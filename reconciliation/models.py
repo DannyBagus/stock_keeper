@@ -22,6 +22,24 @@ class SumUpPayout(models.Model):
 
     # Aus SumUp API ermittelt
     sumup_payout_id = models.CharField(max_length=100, blank=True)
+    sumup_reference = models.CharField(
+        max_length=100, null=True, blank=True, unique=True,
+        verbose_name="SumUp-Referenz",
+        help_text="Bankmitteilung der Gutschrift, z. B. 'SUMUP PID1871758 PAYOUT 041126'",
+    )
+    engine_version = models.PositiveSmallIntegerField(
+        default=1,
+        help_text="1 = alter Heuristik-Abgleich (historisch), 2 = exakter Ledger-Abgleich",
+    )
+    refunds_amount = models.DecimalField(
+        max_digits=10, decimal_places=2, default=0,
+        verbose_name="Rückerstattungen (Erlösminderung)",
+    )
+    extra_fees_amount = models.DecimalField(
+        max_digits=10, decimal_places=2, default=0,
+        verbose_name="Zusätzliche Abzüge (nicht erstattete Refund-Gebühren)",
+    )
+    warnings = models.TextField(blank=True, verbose_name="Warnungen aus SumUp-Daten")
     period_start = models.DateField(null=True, blank=True, verbose_name="Abrechnungsperiode von")
     period_end = models.DateField(null=True, blank=True, verbose_name="Abrechnungsperiode bis")
     sumup_gross_amount = models.DecimalField(
@@ -42,6 +60,7 @@ class SumUpPayout(models.Model):
         DRAFT = 'DRAFT', 'Entwurf'
         IN_REVIEW = 'IN_REVIEW', 'In Prüfung'
         COMPLETED = 'COMPLETED', 'Abgeschlossen'
+        SUPERSEDED = 'SUPERSEDED', 'Ersetzt (neu abgeglichen)'
 
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
@@ -71,7 +90,16 @@ class SumUpPayout(models.Model):
 
     @property
     def booking_summary(self):
+        if self.engine_version >= 2:
+            from .booking import ledger_summary
+            return ledger_summary(self)
+        return self.legacy_booking_summary
+
+    @property
+    def legacy_booking_summary(self):
         """
+        Engine v1 (historisch, nur für bereits gebuchte Abgleiche).
+
         Zentrale Aggregation für Review-Screen und PDF-Buchungsbeleg.
 
         Erlöse werden mit dem *vollen* Transaktionsbetrag gebucht (sumup_amount).
@@ -168,6 +196,10 @@ class ReconciliationItem(models.Model):
     )
     sumup_amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     sumup_fee = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    sumup_net = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+        help_text="Ausbezahlter Nettobetrag dieser Auszahlungszeile",
+    )
     sumup_refund_deduction = models.DecimalField(
         max_digits=10, decimal_places=2, default=0,
         help_text="Refund-Abzug auf dieser Auszahlungszeile "
@@ -187,6 +219,8 @@ class ReconciliationItem(models.Model):
         ONLY_SUMUP = 'ONLY_SUMUP', 'Nur SumUp (fehlt in SK)'
         ONLY_SK = 'ONLY_SK', 'Nur SK (falscher Zahlungstyp?)'
         GAP = 'GAP', 'Betragsdifferenz > Toleranz'
+        DUPLICATE = 'DUPLICATE', 'Mehrere SK-Sales zur selben Zahlung'
+        REFUND = 'REFUND', 'Rückerstattung (Erlösminderung)'
 
     match_tier = models.CharField(max_length=20, choices=MatchTier.choices, blank=True)
     match_status = models.CharField(max_length=20, choices=MatchStatus.choices)
