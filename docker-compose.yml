@@ -42,7 +42,11 @@ services:
       - .env.prod
     environment:
       - DJANGO_SETTINGS_MODULE=stock_keeper.settings.prod
-      - DB_HOST=db
+      # WICHTIG: Eindeutiger Container-Name statt Service-Alias "db".
+      # Im geteilten Netz "daniel_default" tragen mehrere DB-Container den
+      # Alias "db" (muensterli-db, sowavoe-db-1) -> DNS-Round-Robin -> sporadische
+      # "1045 Access denied". stock_keeper_db ist hostweit eindeutig.
+      - DB_HOST=stock_keeper_db
     networks:
       - "daniel_default"
     labels:
