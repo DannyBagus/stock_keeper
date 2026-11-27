@@ -45,8 +45,10 @@ Technisch (Stock Keeper):
 - [x] 3. `sync_sumup_payouts` (Auto-Erkennung + Mail). **Cron noch eintragen (Daniel):**
       `45 5,6 * * * /home/daniel/mileja/workbench/run_at_swiss_time.sh 07:45 docker exec stock_keeper_web python manage.py sync_sumup_payouts >> /home/daniel/stock_keeper_cron.log 2>&1`
 - [x] 4. `booking.py` Buchungsvorschlag 1101-Methode je Monat + Beleg v2 (`voucher_pdf_v2.html`), Konten via `settings.SUMUP_ACCOUNTING`
-- [ ] 5. KLARA: Buchung A per API (prepare → Freigabe 2FA), Beleg-Upload (API derzeit KLARA-seitig defekt → Fallback)
-- [ ] 6. KLARA-Bankabgleich: Gutschrift → 1101
+- [x] 5. KLARA: Umsatzbuchungen A gebucht – Aug #25126 (31.07.), Sep #25128 (31.08.), Okt #25129 (30.09.), Nov #25130 (31.10.), je Passkey-Freigabe. Bankabgleich (B) + Beleg-Anhang manuell durch Daniel (27.11.)
+- [x] 6. KLARA-Bankabgleich Aug–Nov durch Daniel erledigt, 1101 = 0.00 (27.11.)
+- [x] 9. Mail mit Freigabe-Link: /reconciliation/<pk>/klara/ bucht per KLARA-REST-API (explizite Berechtigung post_to_klara: admin, ari). Abgleiche #19–#22 mit KLARA-IDs nachgetragen.
+- [ ] 10. Erster echter API-POST erst bei der Dezember-Gutschrift (Feldnamen aus KLARA-Antwort abgeleitet, Test-POST war blockiert) → Ergebnis prüfen
 - [x] 7. Abschluss nur wenn grün; Aktionen ohne Buchungswirkung entfernt; Nachbuchen verknüpft bestehenden Kassen-Sale statt Duplikat; „Verknüpfen" für Sale-ohne-Code ↔ Zahlung
 - [x] 8. Tests `reconciliation/tests.py` (14, Szenarien Aug/Jun/Sep), Suite 50/50 grün; Trockenlauf Jun–Nov: jede Auszahlung Differenz 0.00, Saldo 1101 = 0.00
 

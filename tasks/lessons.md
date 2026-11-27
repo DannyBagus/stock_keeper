@@ -39,3 +39,9 @@ unabhängig vom Flow. Die Provider-Einstellung kann das nicht abschalten.
   nicht nur der Django-Redirect.
 - Direkter Authentik-Logout: eigener Invalidation-Flow via `/if/flow/<slug>/`
   (User-Logout-Stage + Redirect-Stage), nicht der OIDC end-session-Endpunkt.
+
+## Freigabe-URLs mit Endzeichen `_` immer als Codeblock (2026-11-27)
+
+**Fehler:** KLARA-Freigabelink `…/stg_boSJ83FWEpG64im_` als Klick-Link ausgegeben. Das Terminal hat das abschliessende `_` abgeschnitten → „Freigabe nicht möglich".
+
+**Regel:** Freigabe-, Token- und Staging-URLs immer zusätzlich in einem Codeblock ausgeben (vollständig kopierbar) und darauf hinweisen, die URL komplett zu kopieren.
