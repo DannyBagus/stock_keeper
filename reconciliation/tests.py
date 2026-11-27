@@ -305,3 +305,115 @@ class MatchingAndBookingTests(TestCase):
         s = payout.booking_summary
         self.assertTrue(s['is_balanced'], s['open_items'])
         self.assertEqual(s['cafe_total'], D('10.00'))
+
+
+class KlaraPostingTests(TestCase):
+    """Buchung in KLARA nach Freigabe in Stock Keeper (HTTP gemockt)."""
+
+    def setUp(self):
+        from django.contrib.auth.models import Permission
+        vat = Vat.objects.create(name='Normal', rate=D('8.10'), is_default=True)
+        cat = Category.objects.create(name='Stützhosen')
+        prod = Product.objects.create(name='Hose', category=cat, sales_price=D('100'),
+                                      cost_price=D('50'), vat=vat, track_stock=False)
+        User = get_user_model()
+        self.alessia = User.objects.create_user('alessia', is_staff=True)
+        self.alessia.user_permissions.add(Permission.objects.get(codename='post_to_klara'))
+        self.kasse = User.objects.create_user('kasse', is_staff=True)
+        self.super_kasse = User.objects.create_superuser('nina', 'n@x.ch', 'pw')
+        ts = datetime(2026, 10, 10, 10, tzinfo=dt_tz.utc)
+        s = Sale.objects.create(date=ts, payment_method='SUMUP', transaction_id='A',
+                                total_amount_gross=D('100.00'), created_by=self.kasse)
+        SaleItem.objects.create(sale=s, product=prod, quantity=1, unit_price_gross=D('100.00'))
+        ledger = build_ledgers([payout_row('A', 98.50, 1.50, '2026-11-04', 'SUMUP PID1871758 PAYOUT 041126')],
+                               [payment('A', 100.00, '2026-10-10T10:00:00Z')])['SUMUP PID1871758 PAYOUT 041126']
+        self.payout = SumUpPayout.objects.create(
+            sumup_reference=ledger.reference, engine_version=2, status='IN_REVIEW',
+            bank_credit_amount=ledger.bank_amount, bank_credit_date=ledger.payout_date,
+            period_start=ledger.period_start, period_end=ledger.period_end)
+        ReconciliationItem.objects.bulk_create(run_matching(self.payout, ledger, {'A'}))
+        self.url = f'/reconciliation/{self.payout.pk}/klara/'
+
+    def fake_klara(self, existing=()):
+        posted = []
+
+        def request(method, url, **kw):
+            resp = mock.Mock(status_code=200, content=b'x')
+            if method == 'GET':
+                resp.json.return_value = {'lines': [
+                    {'bookingId': i, 'description': 'SumUp Abrechnung 10/2026 (PID1871758) – x'}
+                    for i in existing]}
+            else:
+                posted.append(kw['json'])
+                resp.json.return_value = {'booking': {'id': 900 + len(posted)}}
+            return resp
+        return request, posted
+
+    def test_approve_posts_balanced_booking_once(self):
+        request, posted = self.fake_klara()
+        self.client.force_login(self.alessia)
+        with self.settings(KLARA_API_KEY='k'), mock.patch('requests.Session.request', side_effect=request):
+            self.assertContains(self.client.get(self.url), 'Freigeben &amp; in KLARA buchen')
+            self.client.post(self.url)
+            self.client.post(self.url)          # Doppelklick → keine zweite Buchung
+        self.assertEqual(len(posted), 1)
+        body = posted[0]
+        self.assertEqual(body['bookingDate'], '2026-10-31T00:00:00Z')
+        lines = {(l['accountCode'], l['crdrType']): l['amount'] for l in body['bookingDetails']}
+        self.assertEqual(lines, {(1101, 'DR'): 98.5, (3000, 'CR'): 100.0, (6000, 'DR'): 1.5})
+        self.payout.refresh_from_db()
+        self.assertEqual(self.payout.klara_booking_ids, '901')
+        self.assertEqual(self.payout.status, 'COMPLETED')
+        self.assertEqual(self.payout.klara_booked_by, self.alessia)
+
+    def test_existing_klara_booking_blocks_posting(self):
+        request, posted = self.fake_klara(existing=[25130])
+        self.client.force_login(self.alessia)
+        with self.settings(KLARA_API_KEY='k'), mock.patch('requests.Session.request', side_effect=request):
+            self.client.post(self.url)
+        self.assertEqual(posted, [])
+        self.payout.refresh_from_db()
+        self.assertEqual(self.payout.klara_booking_ids, '25130')
+
+    def test_without_permission_nothing_is_posted(self):
+        request, posted = self.fake_klara()
+        self.client.force_login(self.kasse)
+        with self.settings(KLARA_API_KEY='k'), mock.patch('requests.Session.request', side_effect=request):
+            resp = self.client.get(self.url)
+            self.assertNotContains(resp, 'Freigeben &amp; in KLARA buchen</button>')
+            self.client.post(self.url)
+        self.assertEqual(posted, [])
+
+    def test_superuser_without_explicit_permission_cannot_post(self):
+        request, posted = self.fake_klara()
+        self.client.force_login(self.super_kasse)
+        with self.settings(KLARA_API_KEY='k'), mock.patch('requests.Session.request', side_effect=request):
+            self.client.post(self.url)
+        self.assertEqual(posted, [])
+
+    def test_klara_error_releases_claim(self):
+        def failing(method, url, **kw):
+            if method == 'GET':
+                return mock.Mock(status_code=200, content=b'x', json=lambda: {'lines': []})
+            return mock.Mock(status_code=400, content=b'x', text='bad',
+                             json=lambda: {'message': 'bookingDate is required'})
+        self.client.force_login(self.alessia)
+        with self.settings(KLARA_API_KEY='k'), mock.patch('requests.Session.request', side_effect=failing):
+            resp = self.client.post(self.url, follow=True)
+        self.assertContains(resp, 'bookingDate is required')
+        self.payout.refresh_from_db()
+        self.assertEqual(self.payout.klara_booking_ids, '')
+        self.assertEqual(self.payout.status, 'IN_REVIEW')
+
+    def test_mail_contains_approval_and_pdf_links(self):
+        from django.core import mail
+        from django.core.management import call_command
+        with mock.patch('reconciliation.management.commands.sync_sumup_payouts.SumUpClient'), \
+             mock.patch('reconciliation.management.commands.sync_sumup_payouts.sync_new_payouts',
+                        return_value=[self.payout]):
+            call_command('sync_sumup_payouts', stdout=mock.Mock())
+        self.assertEqual(len(mail.outbox), 1)
+        html = mail.outbox[0].alternatives[0][0]
+        self.assertIn(f'/reconciliation/{self.payout.pk}/klara/', html)
+        self.assertIn(f'/reconciliation/{self.payout.pk}/pdf/', html)
+        self.assertEqual(mail.outbox[0].to, ['info@mileja.ch', 'admin@mileja.ch'])

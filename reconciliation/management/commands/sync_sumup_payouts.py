@@ -13,7 +13,8 @@ Cron (Host, täglich 07:45 CH-Zeit):
 from datetime import date, timedelta
 
 from django.conf import settings
-from django.core.mail import send_mail
+from django.core.mail import EmailMultiAlternatives
+from django.template.loader import render_to_string
 from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
@@ -78,7 +79,10 @@ class Command(BaseCommand):
                     f"  - {i.get_match_status_display()}: {i.sumup_tx_code or '–'}"
                     f"{f' Sale #{i.sale_id}' if i.sale_id else ''} CHF {i.sumup_amount or i.sk_amount}\n"
                     for i in s['open_items'])
-                + f"  {BASE_URL}/reconciliation/{p.pk}/review/\n"
+                + (f"  >> Freigeben & in KLARA buchen: {BASE_URL}/reconciliation/{p.pk}/klara/\n"
+                   if s['is_balanced'] else
+                   f"  >> Offene Positionen klären: {BASE_URL}/reconciliation/{p.pk}/review/\n")
+                + f"  Beleg (PDF): {BASE_URL}/reconciliation/{p.pk}/pdf/\n"
             )
         body = "Neue SumUp-Auszahlung(en) abgeglichen:\n\n" + "\n".join(lines)
         self.stdout.write(body)
@@ -88,10 +92,15 @@ class Command(BaseCommand):
         recipients = (opts['recipients'].split(',') if opts['recipients']
                       else getattr(settings, 'SUMUP_RECON_RECIPIENTS', DEFAULT_RECIPIENTS))
         balanced = all(p.booking_summary['is_balanced'] for p in created)
-        send_mail(
+        msg = EmailMultiAlternatives(
             subject=("SumUp-Abgleich bereit zur Freigabe" if balanced
                      else "SumUp-Abgleich: offene Positionen"),
-            message=body,
+            body=body,
             from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[r.strip() for r in recipients if r.strip()],
+            to=[r.strip() for r in recipients if r.strip()],
         )
+        msg.attach_alternative(render_to_string('reconciliation/payout_mail.html', {
+            'payouts': [(p, p.booking_summary) for p in created],
+            'base_url': BASE_URL,
+        }), 'text/html')
+        msg.send()

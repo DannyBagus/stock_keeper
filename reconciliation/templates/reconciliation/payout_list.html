@@ -51,6 +51,8 @@
                                 {% elif r.payout.status == 'COMPLETED' %}
                                 <span class="badge badge-success">Abgeschlossen</span>
                                 {% if r.payout.engine_version == 1 %}<span class="badge badge-light">alt</span>{% endif %}
+                                {% if r.payout.is_booked_in_klara %}<span class="badge badge-info" title="KLARA {{ r.payout.klara_booking_ids }}">KLARA ✓</span>
+                                {% elif r.payout.engine_version == 2 %}<span class="badge badge-light">KLARA offen</span>{% endif %}
                                 {% else %}
                                 <span class="badge badge-warning">In Prüfung</span>
                                 {% if r.payout.engine_version == 1 %}<span class="badge badge-light">alt</span>{% endif %}

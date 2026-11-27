@@ -2,7 +2,10 @@ from .base import *
 import os
 from dotenv import load_dotenv
 
-load_dotenv()  # Lädt .env.prod Variablen die nicht bereits in os.environ sind
+load_dotenv()  # Lädt .env Variablen die nicht bereits in os.environ sind
+# .env.prod liegt im gemounteten Code-Verzeichnis: neue Keys wirken so schon nach
+# einem Restart (env_file greift erst beim Neuerstellen des Containers).
+load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), '.env.prod'))
 
 # --- Production specific settings ---
 
@@ -70,6 +73,9 @@ SHOPIFY_WEBHOOK_SECRET = os.environ.get('SHOPIFY_WEBHOOK_SECRET', '')
 
 # SumUp API Key
 SUMUP_API_KEY = os.environ.get('SUMUP_API_KEY', '')
+
+# KLARA REST-API (SumUp-Abgleich: Buchung nach Freigabe in Stock Keeper)
+KLARA_API_KEY = os.environ.get('KLARA_API_KEY', '')
 
 # Send Mail settings
 EMAIL_HOST = 'mail.infomaniak.com'

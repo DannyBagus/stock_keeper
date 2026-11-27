@@ -18,7 +18,10 @@ from .models import SumUpPayout, ReconciliationItem
 from .sumup_client import SumUpClient, SumUpAPIError
 from .matching import detect_channel
 from .pdf import generate_voucher_pdf
-from .services import ReconciliationError, create_reconciliation, list_sumup_payouts
+from .services import (
+    KlaraPostingError, ReconciliationError, can_post_to_klara, create_reconciliation,
+    list_sumup_payouts, post_to_klara,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -355,3 +358,38 @@ def reconciliation_complete(request, pk):
 def reconciliation_pdf(request, pk):
     payout = get_object_or_404(SumUpPayout, pk=pk)
     return generate_voucher_pdf(payout)
+
+
+@staff_member_required
+def klara_approve(request, pk):
+    """
+    Freigabe-Seite aus der Monats-Mail: zeigt den Buchungsvorschlag und bucht
+    nach Klick direkt in KLARA (Berechtigung reconciliation.post_to_klara).
+    """
+    payout = get_object_or_404(SumUpPayout, pk=pk)
+    can_post = can_post_to_klara(request.user)
+    if request.method == 'POST':
+        if not can_post:
+            messages.error(request, "Dir fehlt die Berechtigung «SumUp-Abgleich in KLARA buchen».")
+        else:
+            try:
+                ids = post_to_klara(payout.pk, request.user)
+                messages.success(
+                    request,
+                    f"In KLARA gebucht (Buchung {', '.join(map(str, ids))}). "
+                    f"Jetzt noch im KLARA-Bankabgleich die Gutschrift vom "
+                    f"{payout.bank_credit_date:%d.%m.%Y} auf Konto 1101 zuordnen und das PDF anhängen.")
+            except KlaraPostingError as e:
+                messages.error(request, f"Nicht gebucht: {e}")
+        return redirect('reconciliation:klara_approve', pk=payout.pk)
+
+    payout.refresh_from_db()
+    context = admin.site.each_context(request)
+    context.update({
+        'title': f'KLARA-Freigabe: {payout}',
+        'payout': payout,
+        'can_post': can_post,
+    })
+    if payout.engine_version >= 2:
+        context.update(payout.booking_summary)
+    return render(request, 'reconciliation/klara_approve.html', context)

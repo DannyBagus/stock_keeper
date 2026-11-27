@@ -40,6 +40,15 @@ class SumUpPayout(models.Model):
         verbose_name="Zusätzliche Abzüge (nicht erstattete Refund-Gebühren)",
     )
     warnings = models.TextField(blank=True, verbose_name="Warnungen aus SumUp-Daten")
+    klara_booking_ids = models.CharField(
+        max_length=200, blank=True, verbose_name="KLARA-Buchungs-IDs",
+        help_text="Komma-getrennt; gesetzt, sobald die Umsatzbuchung in KLARA erfasst ist",
+    )
+    klara_booked_at = models.DateTimeField(null=True, blank=True)
+    klara_booked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='+',
+    )
     period_start = models.DateField(null=True, blank=True, verbose_name="Abrechnungsperiode von")
     period_end = models.DateField(null=True, blank=True, verbose_name="Abrechnungsperiode bis")
     sumup_gross_amount = models.DecimalField(
@@ -69,6 +78,7 @@ class SumUpPayout(models.Model):
 
     class Meta:
         ordering = ['-bank_credit_date']
+        permissions = [('post_to_klara', 'SumUp-Abgleich in KLARA buchen')]
         verbose_name = "SumUp Auszahlung"
         verbose_name_plural = "SumUp Auszahlungen"
 
@@ -80,6 +90,10 @@ class SumUpPayout(models.Model):
         if self.period_start and self.period_end:
             return f"{self.period_start.strftime('%d.%m.%Y')} – {self.period_end.strftime('%d.%m.%Y')}"
         return "Periode unbekannt"
+
+    @property
+    def is_booked_in_klara(self) -> bool:
+        return bool(self.klara_booking_ids) and self.klara_booking_ids != 'IN_ARBEIT'
 
     @property
     def delta(self):

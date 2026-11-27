@@ -293,3 +293,7 @@ JAZZMIN_UI_TWEAKS = {
         "success": "btn-success"
     }
 }
+
+# --- KLARA (Buchhaltung) ---
+KLARA_API_BASE = 'https://api.klara.ch/core/v1'
+KLARA_API_KEY = os.environ.get('KLARA_API_KEY', '')

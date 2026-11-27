@@ -1,0 +1,83 @@
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+<div class="col-12 col-xl-10">
+    {% for message in messages %}
+    <div class="alert alert-{% if message.tags == 'error' %}danger{% else %}{{ message.tags }}{% endif %}">{{ message }}</div>
+    {% endfor %}
+
+    <div class="card card-primary card-outline">
+        <div class="card-header">
+            <h3 class="card-title"><i class="fas fa-file-signature mr-2"></i>
+                SumUp-Gutschrift {{ payout.bank_credit_date|date:"d.m.Y" }} · CHF {{ payout.bank_credit_amount }} in KLARA buchen
+            </h3>
+        </div>
+        <div class="card-body">
+            <p class="mb-1"><strong>Referenz:</strong> <code>{{ payout.sumup_reference }}</code></p>
+            <p class="mb-3"><strong>Kartenzahlungen:</strong> {{ payout.period_label }}</p>
+
+            {% if payout.is_booked_in_klara %}
+            <div class="alert alert-success mb-3">
+                <i class="fas fa-check-circle mr-2"></i>
+                In KLARA gebucht: Buchung <strong>{{ payout.klara_booking_ids }}</strong>
+                {% if payout.klara_booked_at %} am {{ payout.klara_booked_at|date:"d.m.Y H:i" }}{% endif %}
+                {% if payout.klara_booked_by %} durch {{ payout.klara_booked_by.get_full_name|default:payout.klara_booked_by.username }}{% endif %}.
+                <hr class="my-2">
+                Noch von Hand in KLARA:
+                <ol class="mb-0">
+                    <li>Bankabgleich: Gutschrift vom {{ payout.bank_credit_date|date:"d.m.Y" }} über CHF {{ payout.bank_credit_amount }} voll auf Konto <strong>1101</strong>.</li>
+                    <li>Beleg (PDF unten) an die Buchung hängen.</li>
+                </ol>
+            </div>
+            {% elif engine_version != 2 %}
+            <div class="alert alert-secondary">Dieser Abgleich wurde nach der alten Methode erstellt und kann hier nicht gebucht werden.</div>
+            {% elif not is_balanced %}
+            <div class="alert alert-warning">
+                <i class="fas fa-exclamation-triangle mr-2"></i>
+                Der Abgleich hat noch {{ open_count }} offene Position(en){% if warnings %} bzw. Warnungen{% endif %}.
+                Bitte zuerst <a href="{% url 'reconciliation:review' pk=payout.pk %}">im Abgleich klären</a>.
+            </div>
+            {% endif %}
+
+            {% if engine_version == 2 %}
+            <table class="table table-sm">
+                <thead><tr><th>Datum</th><th>Konto</th><th class="text-right">Soll</th><th class="text-right">Haben</th><th>Text</th><th>Tag</th></tr></thead>
+                <tbody>
+                {% for b in proposal.bookings %}{% for l in b.lines %}
+                    <tr{% if forloop.first %} style="border-top:2px solid #dee2e6"{% endif %}>
+                        <td>{% if forloop.first %}{{ b.date|date:"d.m.Y" }}{% endif %}</td>
+                        <td>{{ l.account }}</td>
+                        <td class="text-right">{% if l.side == 'DR' %}{{ l.amount }}{% endif %}</td>
+                        <td class="text-right">{% if l.side == 'CR' %}{{ l.amount }}{% endif %}</td>
+                        <td>{{ l.text }}</td>
+                        <td><small>{{ l.tag }}</small></td>
+                    </tr>
+                {% endfor %}{% endfor %}
+                </tbody>
+            </table>
+            <p class="text-muted small">Umsatz CHF {{ gross_total }} − Rückerstattungen CHF {{ refunds_total }} − Gebühren CHF {{ total_fees }}
+                = CHF {{ computed_net }} = Bankgutschrift CHF {{ payout.bank_credit_amount }}.</p>
+            {% endif %}
+
+            <div class="d-flex flex-wrap" style="gap:.5rem">
+                <a href="{% url 'reconciliation:pdf' pk=payout.pk %}" target="_blank" class="btn btn-outline-info">
+                    <i class="fas fa-file-pdf mr-1"></i> Beleg (PDF)
+                </a>
+                <a href="{% url 'reconciliation:review' pk=payout.pk %}" class="btn btn-outline-secondary">
+                    <i class="fas fa-list mr-1"></i> Abgleich im Detail
+                </a>
+                {% if engine_version == 2 and is_balanced and not payout.is_booked_in_klara %}
+                    {% if can_post %}
+                    <form method="post" class="ml-auto" onsubmit="this.querySelector('button').disabled=true; return confirm('Jetzt in KLARA buchen? Das wirkt auf die echte Buchhaltung.');">
+                        {% csrf_token %}
+                        <button class="btn btn-success btn-lg"><i class="fas fa-check-double mr-2"></i> Freigeben &amp; in KLARA buchen</button>
+                    </form>
+                    {% else %}
+                    <span class="ml-auto text-muted align-self-center">Dir fehlt die Berechtigung «SumUp-Abgleich in KLARA buchen».</span>
+                    {% endif %}
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

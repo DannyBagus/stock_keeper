@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f4efee;font-family:Helvetica,Arial,sans-serif;color:#333;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4efee;"><tr><td align="center" style="padding:24px 12px;">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#fff;border-radius:8px;overflow:hidden;">
+  <tr><td style="background:#aa8684;padding:22px 28px;color:#fff;">
+    <div style="font-size:12px;letter-spacing:1px;text-transform:uppercase;opacity:.85;">SupportElle by Mileja · SumUp-Abgleich</div>
+    <div style="font-size:21px;font-weight:bold;margin-top:4px;">Neue SumUp-Gutschrift</div>
+  </td></tr>
+  {% for p, s in payouts %}
+  <tr><td style="padding:22px 28px 6px 28px;">
+    <div style="font-size:17px;font-weight:bold;">CHF {{ p.bank_credit_amount }} <span style="font-weight:normal;color:#777;">am {{ p.bank_credit_date|date:"d.m.Y" }}</span></div>
+    <div style="font-size:12px;color:#999;margin-bottom:12px;">{{ p.sumup_reference }} · Kartenzahlungen {{ p.period_label }}</div>
+    <table role="presentation" width="100%" cellpadding="5" cellspacing="0" style="font-size:14px;border-collapse:collapse;">
+      <tr><td style="border-bottom:1px solid #f0e8e7;">Kartenumsatz Laden</td><td align="right" style="border-bottom:1px solid #f0e8e7;">{{ s.laden_total }}</td></tr>
+      <tr><td style="border-bottom:1px solid #f0e8e7;">Kartenumsatz Café</td><td align="right" style="border-bottom:1px solid #f0e8e7;">{{ s.cafe_total }}</td></tr>
+      {% if s.refunds_total %}<tr><td style="border-bottom:1px solid #f0e8e7;">./. Rückerstattungen</td><td align="right" style="border-bottom:1px solid #f0e8e7;">{{ s.refunds_total }}</td></tr>{% endif %}
+      <tr><td style="border-bottom:1px solid #f0e8e7;">./. SumUp-Gebühren</td><td align="right" style="border-bottom:1px solid #f0e8e7;">{{ s.total_fees }}</td></tr>
+      <tr><td><strong>= Gutschrift</strong></td><td align="right"><strong>{{ s.computed_net }}</strong></td></tr>
+    </table>
+    {% if s.is_balanced %}
+    <p style="margin:16px 0 6px 0;font-size:14px;color:#2e7d32;font-weight:bold;">✓ Alles abgeglichen, bereit zur Freigabe.</p>
+    <a href="{{ base_url }}/reconciliation/{{ p.pk }}/klara/" style="display:inline-block;background:#2e7d32;color:#fff;text-decoration:none;padding:11px 18px;border-radius:5px;font-weight:bold;margin:6px 6px 6px 0;">Freigeben &amp; in KLARA buchen</a>
+    {% else %}
+    <p style="margin:16px 0 6px 0;font-size:14px;color:#c77700;font-weight:bold;">{{ s.open_count }} offene Position(en), bitte zuerst klären:</p>
+    <ul style="font-size:13px;margin:0 0 8px 0;padding-left:18px;">
+      {% for w in s.warnings %}<li style="color:#c62828;">{{ w }}</li>{% endfor %}
+      {% for i in s.open_items %}<li>{{ i.get_match_status_display }}: {{ i.sumup_tx_code|default:"–" }}{% if i.sale_id %} · Sale #{{ i.sale_id }}{% endif %} · CHF {{ i.sumup_amount|default:i.sk_amount }}</li>{% endfor %}
+    </ul>
+    <a href="{{ base_url }}/reconciliation/{{ p.pk }}/review/" style="display:inline-block;background:#c77700;color:#fff;text-decoration:none;padding:11px 18px;border-radius:5px;font-weight:bold;margin:6px 6px 6px 0;">Offene Positionen klären</a>
+    {% endif %}
+    <a href="{{ base_url }}/reconciliation/{{ p.pk }}/pdf/" style="display:inline-block;background:#fff;color:#aa8684;border:1px solid #aa8684;text-decoration:none;padding:10px 16px;border-radius:5px;font-weight:bold;margin:6px 0;">Beleg (PDF)</a>
+  </td></tr>
+  {% endfor %}
+  <tr><td style="padding:16px 28px 22px 28px;font-size:13px;line-height:1.5;color:#555;">
+    <strong>Nach der Freigabe noch in KLARA:</strong> im Bankabgleich die SumUp-Gutschrift voll auf Konto <strong>1101</strong> zuordnen und das PDF an die Buchung hängen. Danach steht 1101 auf 0.00.
+  </td></tr>
+  <tr><td style="background:#f7f1f0;padding:10px 28px;font-size:11px;color:#999;text-align:center;">Stock Keeper · automatisch erstellt</td></tr>
+</table></td></tr></table>
+</body></html>

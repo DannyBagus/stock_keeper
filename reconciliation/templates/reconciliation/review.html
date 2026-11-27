@@ -81,6 +81,22 @@
     </div>
     {% endif %}
 
+    {% if engine_version == 2 %}
+    <div class="alert {% if payout.is_booked_in_klara %}alert-light{% else %}alert-info{% endif %} d-flex align-items-center justify-content-between">
+        <span>
+        {% if payout.is_booked_in_klara %}
+            <i class="fas fa-book mr-2"></i> In KLARA gebucht: Buchung <strong>{{ payout.klara_booking_ids }}</strong>
+            {% if payout.klara_booked_by %}({{ payout.klara_booked_by.get_full_name|default:payout.klara_booked_by.username }}, {{ payout.klara_booked_at|date:"d.m.Y" }}){% endif %}
+        {% else %}
+            <i class="fas fa-book mr-2"></i> Noch nicht in KLARA gebucht.
+        {% endif %}
+        </span>
+        <a href="{% url 'reconciliation:klara_approve' pk=payout.pk %}" class="btn btn-sm btn-primary">
+            {% if payout.is_booked_in_klara %}Details{% else %}Freigeben &amp; in KLARA buchen{% endif %}
+        </a>
+    </div>
+    {% endif %}
+
     <!-- Header -->
     <div class="card card-primary card-outline mb-3">
         <div class="card-header">
