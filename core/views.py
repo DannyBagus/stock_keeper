@@ -10,7 +10,7 @@ from django.utils.text import slugify
 from django.views.decorators.http import require_POST
 from django.http import JsonResponse, HttpResponse
 from decimal import Decimal
-from collections import defaultdict, Counter
+from collections import defaultdict
 from datetime import timedelta
 from zoneinfo import ZoneInfo
 import csv
@@ -79,20 +79,13 @@ def dashboard_view(request):
     if revenues:
         mean_val = statistics.mean(revenues)
         median_val = statistics.median(revenues)
-        # Modus: häufigster Monatsumsatz. Auf ganze CHF gerundet, da die
-        # rohen Werte praktisch nie exakt übereinstimmen.
-        rounded = [round(r) for r in revenues]
-        counts = Counter(rounded)
-        top_value, top_freq = counts.most_common(1)[0]
-        mode_str = _chf(float(top_value)) if top_freq > 1 else '–'
         stats = {
             'mean': _chf(mean_val),
             'median': _chf(median_val),
-            'mode': mode_str,
             'sum': _chf(sum(revenues)),
         }
     else:
-        stats = {'mean': '–', 'median': '–', 'mode': '–', 'sum': '–'}
+        stats = {'mean': '–', 'median': '–', 'sum': '–'}
 
     # 2. Verkaufsumsatz CHF nach Produktkategorie (nur abgeschlossene Verkäufe)
     revenue_expr = ExpressionWrapper(
