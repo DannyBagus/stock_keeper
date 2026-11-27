@@ -52,7 +52,8 @@ INSTALLED_APPS = [
 
 AUTHENTICATION_BACKENDS = [
     'core.oidc_backend.StockKeeperOIDCBackend',
-    'django.contrib.auth.backends.ModelBackend',
+    # Passwort-Login nur für Superuser (Notfall: /admin/login/?local=1)
+    'core.auth_backends.SuperuserOnlyModelBackend',
 ]
 
 # OIDC (Authentik)
@@ -153,7 +154,12 @@ WEBSHOP_EXCLUDED_CATEGORIES = ['Cafe', 'Café', 'CAFE', 'Tee', 'Kaffee', 'Snack'
 # LOGIN REDIRECT (Wichtig!)
 LOGIN_URL = 'oidc_authentication_init'  # Default-Ziel für @login_required
 LOGIN_REDIRECT_URL = '/'                # Nach Login zum Custom Dashboard
-LOGOUT_REDIRECT_URL = '/admin/login/'   # Nach Logout zum Login
+# Nach Django-Logout auch die Authentik-Session beenden (sonst loggt der nächste
+# SSO-Klick ohne Rückfrage wieder dieselbe Person ein, z. B. an der Kasse).
+# Bewusst NICHT OIDC_OP_LOGOUT_ENDPOINT: Authentik 2024.12 hängt dort immer eine
+# Auswahlseite an. Der Flow 'stockkeeper-logout' (User-Logout + Redirect-Stage)
+# meldet direkt ab und leitet zurück auf /admin/login/.
+LOGOUT_REDIRECT_URL = OIDC_OP_BASE_URL + '/if/flow/stockkeeper-logout/'
 
 
 # --- IMAP (für Bounce-Polling der Rechnungs-Mails) ---

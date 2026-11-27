@@ -1,5 +1,5 @@
 from django.urls import path
-from . import views, views_auth
+from . import views
 
 urlpatterns = [
     # Tools
@@ -14,7 +14,4 @@ urlpatterns = [
 
     # API
     path('api/inventory-correct/', views.api_inventory_correct, name='api_inventory_correct'),
-
-    # Auth
-    path('sso-logout/', views_auth.sso_logout, name='sso_logout'),
 ]

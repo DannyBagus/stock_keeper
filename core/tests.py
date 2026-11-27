@@ -137,3 +137,48 @@ class AutoVariantGroupTests(TestCase):
         p.save(update_fields=["stock_quantity"])
         p.refresh_from_db()
         self.assertEqual(p.variant_group, "")
+
+
+class SSOOnlyLoginTests(TestCase):
+    """Passwort-Login nur für Superuser, Logout beendet auch die Authentik-Session."""
+
+    def setUp(self):
+        from django.contrib.auth.models import Permission, User
+        self.staff = User.objects.create_user("ma", "ma@example.ch", "pw", is_staff=True)
+        self.staff.user_permissions.add(Permission.objects.get(codename="view_product"))
+        self.admin = User.objects.create_superuser("chef", "chef@example.ch", "pw")
+
+    def test_login_page_shows_only_sso_button(self):
+        resp = self.client.get("/admin/login/?next=/core/scanner/")
+        self.assertContains(resp, "Mit SSO anmelden")
+        self.assertContains(resp, "/oidc/authenticate/?next=/core/scanner/")
+        self.assertNotContains(resp, 'type="password"')
+
+    def test_local_mode_shows_password_form(self):
+        resp = self.client.get("/admin/login/?local=1")
+        self.assertContains(resp, 'type="password"')
+
+    def test_staff_password_login_rejected(self):
+        resp = self.client.post("/admin/login/?local=1", {"username": "ma", "password": "pw"})
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotIn("_auth_user_id", self.client.session)
+
+    def test_superuser_password_login_allowed(self):
+        resp = self.client.post("/admin/login/?local=1", {"username": "chef", "password": "pw"})
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(self.client.session["_auth_user_id"], str(self.admin.pk))
+
+    def test_staff_permissions_still_resolved(self):
+        from django.contrib.auth.models import User
+        user = User.objects.get(pk=self.staff.pk)
+        self.assertTrue(user.has_perm("core.view_product"))
+
+    def test_logout_redirects_to_authentik_logout_flow(self):
+        from django.conf import settings
+        self.client.force_login(self.staff)
+        resp = self.client.post("/admin/logout/")
+        self.assertRedirects(
+            resp, settings.OIDC_OP_BASE_URL + "/if/flow/stockkeeper-logout/",
+            fetch_redirect_response=False,
+        )
+        self.assertNotIn("_auth_user_id", self.client.session)

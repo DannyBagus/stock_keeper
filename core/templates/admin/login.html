@@ -7,9 +7,24 @@
 {% block content %}
     <p class="login-box-msg">{{ jazzmin_settings.welcome_sign }}</p>
 
+    {% if user.is_authenticated %}
+        <div class="callout callout-danger">
+            <p>
+                {% blocktrans trimmed %}
+                    You are authenticated as {{ username }}, but are not authorized to
+                    access this page. Would you like to login to a different account?
+                {% endblocktrans %}
+            </p>
+            <form method="post" action="{% url 'admin:logout' %}">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-outline-danger btn-sm">{% trans "Log out" %}</button>
+            </form>
+        </div>
+    {% endif %}
+
     <div class="row mb-3">
         <div class="col-12">
-            <a href="{% url 'oidc_authentication_init' %}"
+            <a href="{% url 'oidc_authentication_init' %}{% if next %}?next={{ next|urlencode }}{% endif %}"
                class="btn btn-success btn-block"
                style="font-weight: 600;">
                 <i class="fas fa-id-badge mr-1"></i>
@@ -18,22 +33,14 @@
         </div>
     </div>
 
+    {# Passwort-Login nur noch als Notfallzugang für Superuser (Backend erzwingt das). #}
+    {% if request.GET.local %}
     <p class="text-center text-muted" style="font-size: 0.85em; margin: 1em 0;">
-        — {% trans "oder mit Passwort" %} —
+        — {% trans "Notfallzugang (nur Administratoren)" %} —
     </p>
 
     <form action="{{ app_path }}" method="post">
         {% csrf_token %}
-        {% if user.is_authenticated %}
-            <div class="callout callout-danger">
-                <p>
-                    {% blocktrans trimmed %}
-                        You are authenticated as {{ username }}, but are not authorized to
-                        access this page. Would you like to login to a different account?
-                    {% endblocktrans %}
-                </p>
-            </div>
-        {% endif %}
         {% if form.errors %}
             {% if form.username.errors %}
                 <div class="callout callout-danger">
@@ -69,16 +76,6 @@
                 </div>
             </div>
         </div>
-        {% url 'admin_password_reset' as password_reset_url %}
-        {% if password_reset_url %}
-            <div class="mb-3">
-                <div class="password-reset-link" style="text-align: center;">
-                    <a href="{{ password_reset_url }}">
-                        {% trans 'Forgotten your password or username?' %}
-                    </a>
-                </div>
-            </div>
-        {% endif %}
         <div class="row">
             <div class="col-12">
                 <button type="submit" class="btn {{ jazzmin_ui.button_classes.primary }} btn-block">
@@ -87,4 +84,5 @@
             </div>
         </div>
     </form>
+    {% endif %}
 {% endblock %}
